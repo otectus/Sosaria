@@ -1,0 +1,4 @@
+# Local outputs from tools
+map.png
+*.cpuprofile
+node_modules/

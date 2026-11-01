@@ -1,15 +1,15 @@
-// Townsfolk: every settlement near the camera wakes up with inhabitants who keep schedules,
-// walk the street graph, work, gather and react to events. Far settlements sleep.
+// Townsfolk as a view of persistent residents. Every figure on screen is a person record from the
+// simulation; this module only interpolates their authoritative tasks along the walkable graph.
+// Which towns are drawn depends on the camera and real time, never on world time (finding F03).
 
 import * as THREE from 'three';
 import { ACT } from '../render/rig.js';
 import { TOOL } from '../models/characters.js';
-import { mulberry32, hashString } from '../core/noise.js';
-import { PLANET_RADIUS, dirToLatLon } from '../core/sphere.js';
-import { residentSchedule, POPULATION } from '../sim/state.js';
+import { PLANET_RADIUS } from '../core/sphere.js';
+import { hourAt } from '../sim/clock.js';
+import { personView } from '../sim/explain.js';
 
 const R = PLANET_RADIUS;
-
 const C = (hex) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b]; };
 const PAL = {
   human: {
@@ -26,10 +26,7 @@ const PAL = {
   draconic: { cloth: [0x2a2a2a, 0x5a1a1a, 0x3a2a1a, 0x7a5a2a].map(C), pants: [0x2a1a1a, 0x3a3a3a].map(C), skin: [0xb8401a, 0xd87a2a, 0x4a8a3a, 0x3a6aa8, 0x9a2a2a].map(C), hair: [0xd8c8a0, 0x2a2a2a].map(C) },
 };
 const GUARD_TABARD = { human: C(0x2a4f9e), elf: C(0x2c8a9a), dwarf: C(0xc79a3c), beast: C(0x9e3a2a), draconic: C(0xa3201c), undead: C(0x2f4f3a), fae: C(0xb35ad6) };
-
-// Inhabitants per settlement kind.
-const POP = POPULATION;
-
+const RUNNING = new Set(['respond', 'salvage']);
 const _m = new THREE.Matrix4();
 
 // Build an instance matrix from a unit dir, height, local-frame forward (fx east, fy north) and scale.
@@ -50,477 +47,145 @@ export function localMatrix(out, d, h, e, n, fx, fy, s) {
   return out;
 }
 
-export class Nav {
-  constructor(site) {
-    this.nodes = []; // [x, y]
-    this.adj = [];
-    const add = (x, y) => { this.nodes.push([x, y]); this.adj.push([]); return this.nodes.length - 1; };
-    const link = (a, b) => { if (a === b) return; if (!this.adj[a].includes(b)) this.adj[a].push(b); if (!this.adj[b].includes(a)) this.adj[b].push(a); };
-    for (const st of site.streets) {
-      let prev = -1;
-      const p = st.pts;
-      for (let i = 0; i < p.length - 1; i++) {
-        const [ax, ay] = p[i], [bx, by] = p[i + 1];
-        const L = Math.hypot(bx - ax, by - ay);
-        const n = Math.max(1, Math.round(L / 0.25));
-        for (let k = 0; k < n; k++) {
-          const t = k / n;
-          const id = add(ax + (bx - ax) * t, ay + (by - ay) * t);
-          if (prev >= 0) link(prev, id);
-          prev = id;
-        }
-      }
-      const last = p[p.length - 1];
-      const id = add(last[0], last[1]);
-      if (prev >= 0) link(prev, id);
-    }
-    const plaza = add(site.plaza[0], site.plaza[1]);
-    this.plaza = plaza;
-    // Junctions between streets.
-    const N = this.nodes.length;
-    for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
-      const d = Math.hypot(this.nodes[a][0] - this.nodes[b][0], this.nodes[a][1] - this.nodes[b][1]);
-      if (d < 0.2) link(a, b);
-    }
-    const near = this.nearestK(site.plaza[0], site.plaza[1], 4);
-    for (const i of near) link(plaza, i);
-    if (N === 1) { /* no streets: plaza only */ }
-  }
-  nearest(x, y) {
-    let best = 0, bd = 1e9;
-    for (let i = 0; i < this.nodes.length; i++) {
-      const d = (this.nodes[i][0] - x) ** 2 + (this.nodes[i][1] - y) ** 2;
-      if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-  }
-  nearestK(x, y, k) {
-    return this.nodes.map((p, i) => [i, (p[0] - x) ** 2 + (p[1] - y) ** 2]).sort((a, b) => a[1] - b[1]).slice(1, k + 1).map(a => a[0]);
-  }
-  path(ax, ay, bx, by) {
-    const s = this.nearest(ax, ay), g = this.nearest(bx, by);
-    const pts = [];
-    if (s !== g) {
-      const came = new Map([[s, -1]]);
-      const queue = [s];
-      let found = false;
-      for (let head = 0; head < queue.length; head++) {
-        const c = queue[head];
-        if (c === g) { found = true; break; }
-        for (const nb of this.adj[c]) if (!came.has(nb)) { came.set(nb, c); queue.push(nb); }
-      }
-      if (found) {
-        let c = g;
-        while (c !== -1) { pts.push(this.nodes[c]); c = came.get(c); }
-        pts.reverse();
-      } else return null;
-    } else pts.push(this.nodes[s]);
-    pts.push([bx, by]);
-    return pts;
-  }
+const pick = (list, n) => list[n % list.length];
+
+function look(p) {
+  const pal = PAL[p.species] || PAL.human, a = p.appearance;
+  return {
+    colA: p.occupation === 'guard' ? (GUARD_TABARD[p.species] || pick(pal.cloth, a)) : pick(pal.cloth, a),
+    colB: pick(pal.pants, a >> 4), skin: pick(pal.skin, a >> 8), hair: pick(pal.hair, a >> 12),
+    scale: (p.age === 'child' ? 0.62 : p.age === 'elder' ? 0.9 : 0.92 + (a % 13) / 100) * 0.78,
+  };
 }
 
-class SiteSim {
-  constructor(site, world, people) {
-    this.site = site; this.world = world; this.people = people;
-    this.field = world.field;
-    this.nav = people.navigation.get(site.s.id);
-    if (!this.nav) { this.nav = new Nav(site); people.navigation.set(site.s.id, this.nav); }
-    this.culture = site.s.culture === 'ruin' ? 'human' : site.s.culture;
-    this.race = this.culture;
-    const [lat, lon] = dirToLatLon(site.d);
-    this.lon = lon;
-    this.agents = [];
-    this.alarm = null;
-    this.rnd = mulberry32(hashString(site.s.id) ^ 0x51f);
-    this.spawn();
+class SiteView {
+  constructor(site, place, people) {
+    this.site = site; this.place = place; this.people = people;
+    this.field = people.world.field;
+    this.lon = site.s.lon;
+    this.agents = new Map();
+    this.paths = new Map();
+    this.sync();
   }
-
-  spots(kind) { return this.site.work.filter(w => w.kind === kind); }
-
-  spawn() {
-    const site = this.site, s = site.s, rnd = this.rnd;
-    const total = POP[s.kind] ?? 20;
-    const residents = this.people.simulation ? Object.values(this.people.simulation.state.residents).filter(r => r.site === s.id) : [];
-    if (!total) return;
-    const doors = site.doors;
-    const homes = doors.filter(d => d.kind === 'home' || d.kind === 'farm');
-    const byRole = (k) => doors.filter(d => d.kind === k);
-    // Work spots from model anchors belonging to this site.
-    const A = this.people.structures.anchors;
-    const localOf = (p) => {
-      const q = p.clone().normalize();
-      const dx = q.x - site.d[0], dy = q.y - site.d[1], dz = q.z - site.d[2];
-      return { x: (dx * site.e[0] + dy * site.e[1] + dz * site.e[2]) * R, y: (dx * site.n[0] + dy * site.n[1] + dz * site.n[2]) * R };
-    };
-    const forges = [], seats = [], works = [];
-    for (const a of A.work) if (a.site === site) { const l = localOf(a.p); l.model = a.rec.model; works.push(l); }
-    for (const a of A.seat) if (a.site === site) seats.push(localOf(a.p));
-    for (const w of works) if (w.model === 'smithy' || w.model === 'dwarf_forge' || w.model === 'lava_forge') forges.push(w);
-    const stalls = this.spots('stall').concat(works.filter(w => w.model === 'stall' || w.model === 'stall_red'));
-    const fields = this.spots('field');
-    const docks = this.spots('dock');
-    const temple = byRole('temple')[0] || byRole('castle')[0];
-    const tavern = byRole('tavern')[0];
-    const construct = works.filter(w => w.model && w.model.startsWith('construct'));
-    const mines = byRole('mine').concat(works.filter(w => w.model === 'mine_entrance'));
-    const gates = byRole('gate').concat(byRole('guard'));
-    const gather = this.spots('gather').concat(this.spots('well'), this.spots('pray'), this.spots('dance'), this.spots('fire'));
-
-    const roles = [];
-    const push = (role, n) => { for (let i = 0; i < n; i++) roles.push(role); };
-    const cult = this.culture;
-    if (cult === 'human') {
-      push('guard', Math.max(2, Math.round(total * 0.1)));
-      push('smith', Math.min(forges.length * 2, Math.round(total * 0.06) + 1));
-      push('merchant', Math.min(stalls.length, Math.round(total * 0.12)));
-      push('farmer', fields.length ? Math.round(total * 0.2) : 0);
-      push('priest', temple ? 2 : 0);
-      push('child', Math.round(total * 0.12));
-      push('elder', Math.round(total * 0.08));
-      push('builder', construct.length ? 5 : 0);
-      push('fisher', docks.length ? 3 : 0);
-      push('bard', tavern ? 1 : 0);
-      push('noble', s.kind === 'capital' ? 4 : 0);
-    } else if (cult === 'elf') { push('guard', 4); push('priest', 4); push('elder', 5); push('bard', 2); push('child', 4); }
-    else if (cult === 'dwarf') { push('guard', 5); push('smith', Math.max(2, forges.length * 2)); push('miner', mines.length ? 8 : 2); push('elder', 3); push('child', 3); }
-    else if (cult === 'fae') { push('dancer', Math.round(total * 0.4)); push('elder', 3); push('child', 4); }
-    else if (cult === 'beast') { push('hunter', 6); push('guard', 4); push('dancer', 6); push('elder', 4); push('child', 5); push('smith', 1); }
-    else if (cult === 'draconic') { push('guard', 6); push('priest', 6); push('smith', Math.max(2, forges.length * 2)); push('child', 4); push('merchant', 3); }
-    else if (cult === 'undead') { push('priest', 5); push('guard', 4); push('elder', 6); push('smith', 1); }
-    while (roles.length < total) roles.push('villager');
-    roles.length = total;
-    residents.forEach((r, i) => { roles[i] = r.role; });
-
-    const pal = PAL[cult] || PAL.human;
-    const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-    for (const role of roles) {
-      const home = homes.length ? pick(homes) : { x: site.plaza[0] + (rnd() - 0.5), y: site.plaza[1] + (rnd() - 0.5) };
-      const ag = {
-        id: this.people.sites.indexOf(site) * 1000 + this.agents.length + 1, role, race: cult, home,
-        colA: role === 'guard' ? (GUARD_TABARD[cult] || pick(pal.cloth)) : pick(pal.cloth), colB: pick(pal.pants), skin: pick(pal.skin), hair: pick(pal.hair),
-        scale: (role === 'child' ? 0.62 : 0.9 + rnd() * 0.14) * 0.78,
-        x: home.x, y: home.y, fx: 0, fy: 1, path: null, pi: 0, act: ACT.idle, tool: 0, speed: 0.06 + rnd() * 0.025,
-        phase: rnd() * 100, inside: false, busyUntil: 0, task: null, name: null,
-      };
-      // Workplace
-      if (role === 'smith') ag.work = forges.length ? pick(forges) : null;
-      if (role === 'merchant') ag.work = stalls.length ? pick(stalls) : null;
-      if (role === 'farmer') ag.work = fields.length ? pick(fields) : null;
-      if (role === 'fisher') ag.work = docks.length ? pick(docks) : null;
-      if (role === 'builder') ag.work = construct.length ? pick(construct) : null;
-      if (role === 'miner') ag.work = mines.length ? pick(mines) : (forges[0] || null);
-      if (role === 'priest') ag.work = temple ? { x: temple.x, y: temple.y } : (gather[0] || null);
-      if (role === 'guard') ag.work = gates.length ? pick(gates) : null;
-      if (role === 'elder') ag.work = seats.length ? pick(seats) : (gather.length ? pick(gather) : null);
-      if (role === 'dancer') ag.work = gather.length ? pick(gather) : null;
-      if (role === 'bard') ag.work = tavern ? { x: tavern.x, y: tavern.y } : null;
-      ag.tavern = tavern ? { x: tavern.x + (rnd() - 0.5) * 0.12, y: tavern.y + (rnd() - 0.5) * 0.12 } : null;
-      ag.name = this.people.nameFor(ag, rnd);
-      const resident = residents[this.agents.length];
-      if (resident) {
-        ag.personId = resident.id; ag.name = resident.name;
-        ag.home = resident.home; ag.work = resident.work;
-      }
-      // Start partway into the day so the town looks lived-in immediately.
-      this.planNext(ag, true);
-      if (ag.path) { const k = Math.floor(rnd() * ag.path.length); ag.pi = k; const p = ag.path[k]; ag.x = p[0]; ag.y = p[1]; }
-      else if (ag.target) { ag.x = ag.target.x; ag.y = ag.target.y; }
-      this.agents.push(ag);
+  // Agents are exactly the residents present here (not travelling between towns).
+  sync() {
+    const state = this.people.sim.state;
+    const here = new Set();
+    for (const p of Object.values(state.residents)) if (p.at.site === this.place.id && !p.journey) here.add(p.id);
+    for (const id of this.agents.keys()) if (!here.has(id)) this.agents.delete(id);
+    for (const id of here) if (!this.agents.has(id)) {
+      const p = state.residents[id];
+      this.agents.set(id, { personId: id, id: p.appearance, name: p.name, race: p.species, role: p.occupation, ...look(p), x: 0, y: 0, fx: 0, fy: 1, act: ACT.idle, tool: TOOL.none, inside: false, phase: (p.appearance % 1000) / 10, world: new THREE.Vector3() });
     }
+    this.syncTick = state.tick;
   }
-
-  hour() { return this.people.clock.hourAt(this.lon); }
-
-  // Decide the next thing to do from the schedule.
-  planNext(ag, init = false) {
-    const h = this.hour();
-    const rnd = this.rnd;
-    const night = h < 5.5 || h > 21.5;
-    const evening = h >= 18 && h <= 22.5;
-    const undead = ag.race === 'undead';
-    const asleep = undead ? (h > 7.5 && h < 18.5 && rnd() < 0.6) : night;
-    let target = null, act = ACT.idle, tool = TOOL.none, dur = 20 + rnd() * 40;
-    const site = this.site;
-    const plaza = { x: site.plaza[0] + (rnd() - 0.5) * 0.5, y: site.plaza[1] + (rnd() - 0.5) * 0.5 };
-    const role = ag.role;
-    if (role === 'guard') {
-      // Guards work around the clock: posts and patrols, torches after dark.
-      tool = night || evening ? TOOL.torch : (ag.race === 'human' && rnd() < 0.4 ? TOOL.sword : TOOL.spear);
-      if (rnd() < 0.5 && ag.work) { target = ag.work; act = ACT.guard; dur = 30 + rnd() * 40; }
-      else {
-        const n = this.nav.nodes[Math.floor(rnd() * this.nav.nodes.length)];
-        target = { x: n[0], y: n[1] }; act = ACT.guard; dur = 4 + rnd() * 8;
-      }
-    } else if (asleep) {
-      target = ag.home; act = ACT.idle; dur = 60 + rnd() * 60; ag.goInside = true;
-    } else if (evening && ag.tavern && role !== 'child' && rnd() < 0.6) {
-      target = ag.tavern; act = rnd() < 0.3 ? ACT.cheer : ACT.talk; dur = 30 + rnd() * 50;
-      if (role === 'bard') { act = ACT.dance; tool = TOOL.lute; }
-    } else {
-      const work = ag.work;
-      const workHours = h >= 6.5 && h <= 18.5;
-      if (role === 'smith' && work && workHours) { target = work; act = ACT.hammer; tool = TOOL.hammer; dur = 40 + rnd() * 60; }
-      else if (role === 'merchant' && work && workHours) { target = work; act = rnd() < 0.6 ? ACT.talk : ACT.idle; dur = 40 + rnd() * 60; }
-      else if (role === 'farmer' && work && workHours) {
-        target = { x: work.x + (rnd() - 0.5) * 0.4, y: work.y + (rnd() - 0.5) * 0.4 };
-        const r = rnd(); act = r < 0.6 ? ACT.farm : r < 0.8 ? ACT.carry : ACT.idle; tool = act === ACT.farm ? TOOL.hoe : act === ACT.carry ? TOOL.sack : 0; dur = 30 + rnd() * 50;
-      } else if (role === 'fisher' && work && h > 4.5 && h < 13) { target = work; act = ACT.fish; tool = TOOL.rod; dur = 60 + rnd() * 60; }
-      else if (role === 'builder' && work && workHours) { target = { x: work.x + (rnd() - 0.5) * 0.1, y: work.y + (rnd() - 0.5) * 0.1 }; act = rnd() < 0.6 ? ACT.hammer : ACT.carry; tool = act === ACT.hammer ? TOOL.hammer : TOOL.sack; dur = 20 + rnd() * 30; }
-      else if (role === 'miner' && workHours) { target = work ? { x: work.x + (rnd() - 0.5) * 0.2, y: work.y + (rnd() - 0.5) * 0.2 } : plaza; act = rnd() < 0.6 ? ACT.mine : ACT.carry; tool = act === ACT.mine ? TOOL.pick : TOOL.sack; dur = 30 + rnd() * 40; }
-      else if (role === 'priest') { target = work ? { x: work.x + (rnd() - 0.5) * 0.3, y: work.y + (rnd() - 0.5) * 0.3 } : plaza; act = rnd() < 0.6 ? ACT.pray : ACT.talk; tool = ag.race === 'elf' || ag.race === 'draconic' ? TOOL.staff : 0; dur = 30 + rnd() * 40; }
-      else if (role === 'elder') { target = work || plaza; act = rnd() < 0.7 ? ACT.sit : ACT.talk; dur = 60 + rnd() * 80; }
-      else if (role === 'child') { target = { x: plaza.x + (rnd() - 0.5) * 0.4, y: plaza.y + (rnd() - 0.5) * 0.4 }; act = rnd() < 0.6 ? ACT.play : ACT.idle; dur = 8 + rnd() * 16; }
-      else if (role === 'dancer') { target = work ? { x: work.x + (rnd() - 0.5) * 0.35, y: work.y + (rnd() - 0.5) * 0.35 } : plaza; act = rnd() < 0.6 ? ACT.dance : ACT.talk; dur = 15 + rnd() * 25; }
-      else if (role === 'hunter') {
-        const a = rnd() * Math.PI * 2, r = site.s.radius * (1.2 + rnd() * 1.5);
-        target = { x: Math.sin(a) * r, y: Math.cos(a) * r }; act = ACT.idle; tool = TOOL.bow; dur = 10 + rnd() * 20;
-      } else if (role === 'bard') { target = plaza; act = ACT.dance; tool = TOOL.lute; dur = 20 + rnd() * 20; }
-      else if (role === 'noble') { target = plaza; act = ACT.talk; dur = 20 + rnd() * 40; }
-      else {
-        // villager errands: fetch water, visit the market, chat, carry goods
-        const r = rnd();
-        const wells = this.spots('well').concat(this.spots('gather'));
-        if (r < 0.25 && wells.length) { const w = wells[Math.floor(rnd() * wells.length)]; target = { x: w.x + (rnd() - 0.5) * 0.1, y: w.y + (rnd() - 0.5) * 0.1 }; act = ACT.idle; tool = TOOL.bucket; dur = 6 + rnd() * 10; }
-        else if (r < 0.5) { target = plaza; act = ACT.talk; dur = 15 + rnd() * 30; }
-        else if (r < 0.7) { const hm = site.doors[Math.floor(rnd() * site.doors.length)]; target = hm ? { x: hm.x, y: hm.y } : plaza; act = ACT.talk; dur = 10 + rnd() * 20; }
-        else if (r < 0.85) { target = ag.home; act = ACT.idle; dur = 20 + rnd() * 30; }
-        else { target = plaza; act = ACT.carry; tool = TOOL.sack; dur = 5 + rnd() * 10; }
-      }
+  path(from, to) {
+    const key = `${from}>${to}`;
+    let p = this.paths.get(key);
+    if (!p) {
+      const route = this.place.nav.route(from, to);
+      const pts = route ? this.place.nav.points(route) : [this.place.nav.nodes[from], this.place.nav.nodes[to]];
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      p = { pts, cum, length: cum.at(-1) };
+      if (this.paths.size > 2000) this.paths.clear();
+      this.paths.set(key, p);
     }
-    if (!target) target = plaza;
-    ag.target = target; ag.nextAct = act; ag.nextTool = tool; ag.dur = dur;
-    ag.carryTool = tool === TOOL.sack || tool === TOOL.bucket || tool === TOOL.torch || tool === TOOL.spear || tool === TOOL.lute || tool === TOOL.staff ? tool : 0;
-    if (!init && ag.goInside && !asleep) ag.goInside = false;
-    const p = this.nav.path(ag.x, ag.y, target.x, target.y);
-    ag.path = p; ag.pi = 0;
-    if (!p) { ag.state = 'act'; ag.act = ACT.idle; ag.busyUntil = this.people.time + 30; ag.goInside = false; return; }
-    ag.state = 'walk';
-    if (init && !(ag.goInside)) { ag.state = 'act'; ag.x = target.x; ag.y = target.y; ag.path = null; ag.busyUntil = this.people.time + rnd() * dur; ag.act = act; ag.tool = tool; }
-    if (init && ag.goInside) { ag.inside = true; ag.x = target.x; ag.y = target.y; ag.state = 'act'; ag.busyUntil = this.people.time + rnd() * dur; ag.path = null; }
+    return p;
   }
-
-  update(dt) {
-    const now = this.people.time;
-    const al = this.alarm && this.alarm.until > now ? this.alarm : null;
-    for (const ag of this.agents) {
-      if (ag.personId) { this.updateResident(ag); continue; }
-      if (al) { this.react(ag, al, dt); continue; }
-      if (ag.reacting) { ag.reacting = false; this.planNext(ag); }
-      if (ag.state === 'walk') {
-        const p = ag.path;
-        if (!p || ag.pi >= p.length) { ag.state = 'act'; ag.busyUntil = now + ag.dur; ag.act = ag.nextAct; ag.tool = ag.nextTool; if (ag.goInside) ag.inside = true; continue; }
-        const [tx, ty] = p[ag.pi];
-        const dx = tx - ag.x, dy = ty - ag.y;
-        const d = Math.hypot(dx, dy);
-        const sp = ag.speed * (ag.race === 'undead' ? 0.55 : 1) * (ag.role === 'child' ? 1.3 : 1);
-        if (d < 0.02) { ag.pi++; continue; }
-        const st = Math.min(d, sp * dt);
-        ag.x += (dx / d) * st; ag.y += (dy / d) * st;
-        ag.fx += ((dx / d) - ag.fx) * Math.min(1, dt * 8); ag.fy += ((dy / d) - ag.fy) * Math.min(1, dt * 8);
-        ag.act = ag.carryTool === TOOL.sack || ag.carryTool === TOOL.bucket ? ACT.carry : ACT.walk;
-        ag.tool = ag.carryTool;
-        ag.inside = false;
+  update(now) {
+    const state = this.people.sim.state, nodes = this.place.nav.nodes;
+    const night = (() => { const h = hourAt(now, this.lon); return h < 6 || h > 20; })();
+    // Figures standing at the same spot share it in a small ring instead of overlapping.
+    const crowd = new Map();
+    for (const ag of this.agents.values()) {
+      const p = state.residents[ag.personId], t = p?.task;
+      if (!p) { ag.inside = true; continue; }
+      if (!t) {
+        // Before a first decision, a resident simply stands where the record places them.
+        const [nx, ny] = nodes[p.at.node];
+        ag.x = nx; ag.y = ny; ag.inside = false; ag.act = ACT.idle; ag.tool = TOOL.none; ag.walking = false;
+        continue;
+      }
+      const pose = t.pose || ['idle', 'none'];
+      if (now < t.arr && t.from !== t.to) {
+        const path = this.path(t.from, t.to);
+        const goal = path.length * Math.max(0, Math.min(1, (now - t.dep) / Math.max(1e-6, t.arr - t.dep)));
+        let k = 1;
+        while (k < path.pts.length - 1 && path.cum[k] < goal) k++;
+        const a = path.pts[k - 1], b = path.pts[k], seg = Math.max(1e-9, path.cum[k] - path.cum[k - 1]);
+        const f = Math.max(0, Math.min(1, (goal - path.cum[k - 1]) / seg));
+        ag.x = a[0] + (b[0] - a[0]) * f; ag.y = a[1] + (b[1] - a[1]) * f;
+        const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+        if (L > 1e-6) { ag.fx = dx / L; ag.fy = dy / L; }
+        const carrying = Object.keys(state.inventories[`inv:carry:${p.id}`]?.goods || {}).length > 0;
+        ag.act = RUNNING.has(t.k) || pose[0] === 'run' || pose[0] === 'flee' ? (pose[0] === 'flee' ? ACT.flee : ACT.run) : carrying || pose[1] === 'bucket' ? ACT.carry : ACT.walk;
+        ag.tool = carrying ? TOOL.sack : pose[1] === 'bucket' ? TOOL.bucket : night && p.occupation === 'guard' ? TOOL.torch : TOOL.none;
+        ag.inside = false; ag.walking = true;
       } else {
-        if (now > ag.busyUntil) this.planNext(ag);
-        else if (ag.act === ACT.talk || ag.act === ACT.idle || ag.act === ACT.sit) {
-          // Face the nearest neighbour when chatting.
-          if (!ag.faceT || now > ag.faceT) {
-            ag.faceT = now + 3 + this.rnd() * 4;
-            let best = null, bd = 0.25;
-            for (const o of this.agents) { if (o === ag || o.inside) continue; const dd = Math.hypot(o.x - ag.x, o.y - ag.y); if (dd < bd) { bd = dd; best = o; } }
-            if (best) { const dx = best.x - ag.x, dy = best.y - ag.y, l = Math.hypot(dx, dy) || 1; ag.fx = dx / l; ag.fy = dy / l; if (ag.act !== ACT.sit) ag.act = ACT.talk; }
-          }
-        }
+        const key = t.to;
+        const slot = crowd.get(key) || 0;
+        crowd.set(key, slot + 1);
+        const [nx, ny] = nodes[t.to];
+        const ring = slot ? 0.035 + 0.012 * Math.floor((slot - 1) / 6) : 0, ang = slot * 1.0472 + (key % 7);
+        ag.x = nx + Math.cos(ang) * ring; ag.y = ny + Math.sin(ang) * ring;
+        ag.inside = t.inside;
+        ag.act = ACT[pose[0]] ?? ACT.idle;
+        ag.tool = TOOL[pose[1]] ?? TOOL.none;
+        if (p.occupation === 'guard' && night && ag.tool === TOOL.spear) ag.tool = TOOL.torch;
+        if (slot && ag.act === ACT.talk) { ag.fx = -Math.cos(ang); ag.fy = -Math.sin(ang); }
+        ag.walking = false;
       }
     }
   }
-
-  updateResident(ag) {
-    const sim = this.people.simulation, person = sim.state.residents[ag.personId];
-    if (!person) return;
-    if (person.location !== person.site || sim.state.trips.some(t => t.carrier === person.id && t.status === 'travelling')) { ag.inside = true; return; }
-    const schedule = residentSchedule(sim.state, person, sim.catalog, this.people.time);
-    ag.doing = schedule.activity;
-    if (ag.scheduleKey !== schedule.key) {
-      ag.scheduleKey = schedule.key;
-      ag.itinerary = this.nav.path(schedule.from.x, schedule.from.y, schedule.to.x, schedule.to.y);
-      ag.lengths = [0];
-      if (ag.itinerary) for (let i = 1; i < ag.itinerary.length; i++) {
-        const a = ag.itinerary[i - 1], b = ag.itinerary[i];
-        ag.lengths.push(ag.lengths[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
-      }
-    }
-    const path = ag.itinerary;
-    if (!path) {
-      ag.x = schedule.from.x; ag.y = schedule.from.y; ag.inside = false; ag.act = ACT.idle;
-      ag.doing = 'waiting for a reachable path'; return;
-    }
-    const distance = ag.lengths.at(-1) * schedule.progress;
-    let k = 1;
-    while (k < path.length - 1 && ag.lengths[k] < distance) k++;
-    const a = path[Math.max(0, k - 1)], b = path[Math.min(k, path.length - 1)];
-    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const f = Math.min(1, Math.max(0, (distance - ag.lengths[k - 1]) / (length || 1)));
-    ag.x = a[0] + (b[0] - a[0]) * f; ag.y = a[1] + (b[1] - a[1]) * f;
-    if (length) { ag.fx = (b[0] - a[0]) / length; ag.fy = (b[1] - a[1]) / length; }
-    ag.inside = schedule.inside; ag.state = schedule.progress < 1 ? 'walk' : 'act';
-    ag.act = ag.state === 'walk' ? ACT.walk : ag.role === 'guard' ? ACT.guard : ag.role === 'farmer' ? ACT.farm : ag.role === 'smith' ? ACT.hammer : ACT.talk;
-    ag.tool = ag.role === 'guard' ? TOOL.spear : ag.role === 'farmer' ? TOOL.hoe : ag.role === 'smith' ? TOOL.hammer : TOOL.none;
-    if (schedule.activity === 'passing buckets') { ag.tool = TOOL.bucket; ag.act = ACT.carry; }
-    if (schedule.activity === 'waiting for flour') { ag.act = ACT.idle; ag.tool = TOOL.none; }
-  }
-
-  react(ag, al, dt) {
-    ag.reacting = true;
-    if (al.kind === 'thief') {
-      if (!this.thief || this.thief.inside || this.thiefAlarm !== al) {
-        this.thiefAlarm = al;
-        this.thief = this.agents.find(a => a.role === 'villager' && !a.inside) || this.agents[0];
-        this.thiefStart = this.people.time;
-      }
-      const th = this.thief;
-      const t = this.people.time - this.thiefStart;
-      if (ag === th) {
-        // The cutpurse darts around the market square.
-        const a = t * 0.9, r = 0.45 + 0.2 * Math.sin(t * 0.37);
-        this.moveToward(ag, al.x + Math.sin(a) * r, al.y + Math.cos(a) * r, dt, 2.6, ACT.run, TOOL.sack);
-        return;
-      }
-      const dx = th.x - ag.x, dy = th.y - ag.y, d = Math.hypot(dx, dy) || 1;
-      if (ag.role === 'guard') {
-        if (d > 0.07) this.moveToward(ag, th.x, th.y, dt, 2.4, ACT.run, TOOL.sword);
-        else { ag.act = ACT.fight; ag.tool = TOOL.sword; ag.fx = dx / d; ag.fy = dy / d; }
-      } else if (d < 1.5) { ag.act = ACT.point; ag.fx = dx / d; ag.fy = dy / d; }
-      return;
-    }
-    const dx = al.x - ag.x, dy = al.y - ag.y, d = Math.hypot(dx, dy) || 1;
-    const brave = ag.role === 'guard' || (al.kind === 'fire' && ag.role !== 'child');
-    if (al.kind === 'dragon' || al.kind === 'sky') {
-      // Look up and point, children and elders run home.
-      if (ag.role === 'child' || ag.role === 'elder' || (ag.id % 3 === 0)) this.moveToward(ag, ag.home.x, ag.home.y, dt, 2.1, ACT.flee);
-      else { ag.act = ag.id % 2 ? ACT.point : ACT.cheer; ag.fx = dx / d; ag.fy = dy / d; }
-      return;
-    }
-    if (al.kind === 'festival') {
-      if (d > 0.35) this.moveToward(ag, al.x + Math.sin(ag.id) * 0.3, al.y + Math.cos(ag.id) * 0.3, dt, 1.0, ACT.walk);
-      else { ag.act = ag.id % 3 === 0 ? ACT.cheer : ACT.dance; ag.fx = dx / d; ag.fy = dy / d; }
-      return;
-    }
-    if (brave) {
-      if (d > 0.14) this.moveToward(ag, al.x - (dx / d) * 0.1, al.y - (dy / d) * 0.1, dt, 2.2, ACT.run, al.kind === 'fire' ? TOOL.bucket : TOOL.sword);
-      else { ag.act = al.kind === 'fire' ? ACT.carry : ACT.fight; ag.tool = al.kind === 'fire' ? TOOL.bucket : TOOL.sword; ag.fx = dx / d; ag.fy = dy / d; }
-      return;
-    }
-    if (d < 1.4) this.moveToward(ag, ag.home.x, ag.home.y, dt, 2.2, ACT.flee);
-    else { ag.act = ACT.point; ag.fx = dx / d; ag.fy = dy / d; }
-  }
-
-  moveToward(ag, x, y, dt, mul, act, tool = 0) {
-    const dx = x - ag.x, dy = y - ag.y, d = Math.hypot(dx, dy);
-    if (d < 0.03) { ag.act = act === ACT.flee ? ACT.idle : ACT.idle; if (act === ACT.flee) ag.inside = true; return; }
-    const st = Math.min(d, ag.speed * mul * dt);
-    ag.x += (dx / d) * st; ag.y += (dy / d) * st;
-    ag.fx = dx / d; ag.fy = dy / d;
-    ag.act = act; ag.tool = tool; ag.inside = false;
-  }
-
-  worldPos(ag, out) {
-    const p = this.site.dir(ag.x, ag.y);
-    const h = Math.max(0, this.field.height(p[0], p[1], p[2]));
-    return out.set(p[0], p[1], p[2]).multiplyScalar(R + h);
-  }
-
-  render(crowds) {
+  render(crowds, time) {
     const site = this.site;
-    for (const ag of this.agents) {
+    for (const ag of this.agents.values()) {
       if (ag.inside) continue;
-      const lane = ((ag.id % 5) - 2) * 0.012;
-      const x = ag.x + (-ag.fy) * lane * (ag.state === 'walk' ? 1 : 0), y = ag.y + ag.fx * lane * (ag.state === 'walk' ? 1 : 0);
-      const d = site.dir(x, y);
+      const d = site.dir(ag.x, ag.y);
       let h = Math.max(0, this.field.height(d[0], d[1], d[2]));
-      if (ag.race === 'fae') h += 0.012 + 0.006 * Math.sin(this.people.time * 2 + ag.id);
+      if (ag.race === 'fae') h += 0.012 + 0.006 * Math.sin(time * 2 + ag.id);
       localMatrix(_m, d, h, site.e, site.n, ag.fx, ag.fy, ag.scale);
-      ag.world = ag.world || new THREE.Vector3();
       ag.world.set(_m.elements[12], _m.elements[13], _m.elements[14]);
-      crowds[ag.race].push(_m, ag.act, ag.phase, 1, ag.tool, ag.colA, ag.colB, ag.skin, ag.hair);
+      (crowds[ag.race] || crowds.human).push(_m, ag.act, ag.phase, 1, ag.tool, ag.colA, ag.colB, ag.skin, ag.hair);
     }
   }
 }
-
-const NAMES = {
-  human: { first: ['Aldric', 'Brenna', 'Cedric', 'Dagny', 'Edda', 'Falk', 'Gwen', 'Hale', 'Isolde', 'Jory', 'Kestra', 'Lorne', 'Maud', 'Niall', 'Osric', 'Perrin', 'Quill', 'Rowan', 'Sabine', 'Tamsin', 'Ulric', 'Vera', 'Wystan', 'Yara'], last: ['Ashdown', 'Barrow', 'Cobb', 'Dunmore', 'Fletcher', 'Greaves', 'Hollis', 'Marsh', 'Oakes', 'Thatcher', 'Wren', 'Smith', 'Miller', 'Tanner'] },
-  elf: { first: ['Aerith', 'Caelir', 'Elowen', 'Faelar', 'Ilyra', 'Lorien', 'Maelis', 'Nimue', 'Sylvar', 'Thalion', 'Vaela'], last: ['of the Silver Bough', 'Moonweaver', 'Starwhisper', 'Dawnsong'] },
-  dwarf: { first: ['Bori', 'Dagna', 'Durin', 'Grima', 'Hilda', 'Korrin', 'Morga', 'Thrain', 'Ulfa', 'Brokk'], last: ['Ironhand', 'Deepdelver', 'Stonebeard', 'Anvilborn', 'Coppervein'] },
-  fae: { first: ['Bramble', 'Dewdrop', 'Fennel', 'Hollyhock', 'Moth', 'Nettle', 'Pip', 'Sorrel', 'Thistle', 'Wisp'], last: ['of the Ring', 'Lanternfoot', 'Mooncap'] },
-  beast: { first: ['Grakka', 'Horn', 'Kurr', 'Maw', 'Rakk', 'Snarl', 'Tusk', 'Ursa', 'Vorra', 'Yrl'], last: ['Bloodfang', 'Longstride', 'Ashpelt', 'Thornhide', 'Swiftclaw'] },
-  undead: { first: ['Old Bertram', 'Lady Mirel', 'Sexton Voss', 'Brother Ash', 'Widow Cray', 'Sir Hollen'], last: ['(departed)', 'the Restless', 'of the Mere'] },
-  draconic: { first: ['Kesh', 'Ssarva', 'Tokk', 'Vrisk', 'Yzza', 'Zarn', 'Ixi', 'Rhask'], last: ['Scaleborn', 'Emberclaw', 'of the Brazier', 'Cinderkin'] },
-};
-const ROLE_TITLES = { guard: 'guard', smith: 'smith', merchant: 'merchant', farmer: 'farmer', priest: 'priest', child: 'child', elder: 'elder', builder: 'mason',
-  fisher: 'fisher', bard: 'bard', noble: 'courtier', villager: 'townsfolk', miner: 'miner', dancer: 'reveler', hunter: 'hunter' };
-const RACE_TITLES = { human: 'human', elf: 'elf', dwarf: 'dwarf', fae: 'faeborne', beast: 'beastfolk', undead: 'restless dead', draconic: 'dragonkin' };
-
-export const DOING = {
-  [ACT.idle]: 'taking a breather', [ACT.walk]: 'on an errand', [ACT.run]: 'running', [ACT.hammer]: 'hammering at the forge', [ACT.farm]: 'working the field',
-  [ACT.talk]: 'trading gossip', [ACT.carry]: 'hauling goods', [ACT.cheer]: 'cheering', [ACT.guard]: 'keeping watch', [ACT.chop]: 'chopping wood', [ACT.sit]: 'resting their feet',
-  [ACT.pray]: 'at prayer', [ACT.dance]: 'dancing', [ACT.fish]: 'fishing off the dock', [ACT.flee]: 'fleeing for cover', [ACT.fight]: 'fighting', [ACT.play]: 'playing tag',
-  [ACT.point]: 'pointing at the sky', [ACT.mine]: 'swinging a pick',
-};
 
 export class People {
-  constructor(world, sites, clock, structures, crowds, simulation = null) {
-    this.world = world; this.sites = sites; this.clock = clock; this.structures = structures;
-    this.time = 0;
+  constructor(world, sites, catalog, structures, crowds, sim) {
+    this.world = world; this.sites = sites; this.catalog = catalog; this.structures = structures; this.sim = sim;
     this.active = new Map();
-    this.navigation = new Map();
-    this.simulation = simulation;
     this.crowds = {};
     for (const race of ['human', 'elf', 'dwarf', 'fae', 'beast', 'undead', 'draconic']) this.crowds[race] = crowds.get(race);
+    this.lastScan = -Infinity; this.lastCamera = new THREE.Vector3(); this.lastAlt = -1;
   }
-
-  nameFor(ag, rnd) {
-    const N = NAMES[ag.race] || NAMES.human;
-    const f = N.first[Math.floor(rnd() * N.first.length)], l = N.last[Math.floor(rnd() * N.last.length)];
-    return `${f} ${l}`;
-  }
-
-  describe(ag, site) {
-    const person = ag.personId && this.simulation?.state.residents[ag.personId];
-    const trip = person && this.simulation.state.trips.find(t => t.carrier === person.id && t.status === 'travelling');
-    const away = trip ? `travelling to ${this.simulation.catalog.byId[trip.to].name}` : person && person.location !== person.site ? `visiting ${this.simulation.catalog.byId[person.location].name}` : null;
-    return { title: ag.name, sub: `${RACE_TITLES[ag.race]} ${ROLE_TITLES[ag.role] || ag.role} of ${site.s.name}${ag.personId ? ' · known resident' : ''}`, doing: away || ag.doing || DOING[ag.act] || 'going about their day' };
-  }
-
-  simFor(site) { return this.active.get(site.s.id) || null; }
-
-  update(dt, camera, alt) {
-    this.time = this.simulation ? this.simulation.seconds : this.time + dt;
+  // `now` is canonical ticks including the interpolation fraction; `realMs` drives view streaming.
+  update(now, camera, alt, realMs = performance.now()) {
     const cam = camera.position;
-    // Activate settlements near the camera (limit to the closest few).
-    if (!this.lastCamera || this.lastCamera.distanceToSquared(cam) > 0.01 || this.lastAlt !== alt || !this.lastScan || this.time - this.lastScan > 0.5) {
-      this.lastCamera = cam.clone(); this.lastAlt = alt;
-      this.lastScan = this.time;
+    if (cam.distanceToSquared(this.lastCamera) > 0.01 || alt !== this.lastAlt || realMs - this.lastScan > 250) {
+      this.lastCamera.copy(cam); this.lastAlt = alt; this.lastScan = realMs;
       const want = [];
-      if (alt < 7) {
-        for (const site of this.sites) {
-          if (!site.centerWorld) continue;
-          const d = site.centerWorld.distanceTo(cam);
-          if (d < site.s.radius + 5.5) want.push([d, site]);
-        }
+      if (alt < 7) for (const site of this.sites) {
+        if (!site.centerWorld) continue;
+        const d = site.centerWorld.distanceTo(cam);
+        if (d < site.s.radius + 5.5) want.push([d, site]);
       }
       want.sort((a, b) => a[0] - b[0]);
       const keep = new Set(want.slice(0, 3).map(w => w[1].s.id));
       for (const id of [...this.active.keys()]) if (!keep.has(id)) this.active.delete(id);
-      for (const [, site] of want.slice(0, 3)) if (!this.active.has(site.s.id)) this.active.set(site.s.id, new SiteSim(site, this.world, this));
+      for (const [, site] of want.slice(0, 3)) if (!this.active.has(site.s.id)) this.active.set(site.s.id, new SiteView(site, this.catalog.byId[site.s.id], this));
     }
-    for (const sim of this.active.values()) { sim.update(dt); sim.render(this.crowds); }
+    const tick = this.sim.state.tick;
+    for (const view of this.active.values()) {
+      if (view.syncTick !== tick && realMs - (view.syncAt || 0) > 100) { view.sync(); view.syncAt = realMs; }
+      view.update(now);
+      view.render(this.crowds, now * 0.29);
+    }
   }
-
-  // All visible agents (for picking and following).
-  *visibleAgents() {
-    for (const sim of this.active.values()) for (const ag of sim.agents) if (!ag.inside && ag.world) yield { ag, sim };
-  }
-
-  get count() { let n = 0; for (const s of this.active.values()) n += s.agents.length; return n; }
+  reset() { this.active.clear(); this.lastScan = -Infinity; }
+  simFor(site) { return this.active.get(site.s.id) || null; }
+  describe(ag) { return personView(this.sim.state, this.catalog, ag.personId); }
+  *visibleAgents() { for (const view of this.active.values()) for (const ag of view.agents.values()) if (!ag.inside && ag.world.lengthSq() > 1) yield { ag, sim: view }; }
+  get count() { let n = 0; for (const v of this.active.values()) n += v.agents.size; return n; }
 }

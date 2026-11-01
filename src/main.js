@@ -1,7 +1,8 @@
-// Sosaria: bootstrap, main loop and wiring between systems.
+// Sosaria: composition, lifecycle and the frame loop. The simulation kernel owns world state; every
+// system here reads it (or submits commands) and owns only its own presentation resources.
 
 import * as THREE from 'three';
-import { buildWorld } from './world/build.js';
+import { buildWorldDefinition } from './world/definition.js';
 import { WorkerPool } from './terrain/pool.js';
 import { Terrain } from './terrain/terrain.js';
 import { GlobeCamera } from './core/camera.js';
@@ -11,9 +12,6 @@ import { WorldClock, SkyLights } from './render/sky.js';
 import { U } from './render/shared.js';
 import { latLonToDir, PLANET_RADIUS } from './core/sphere.js';
 import { mulberry32 } from './core/noise.js';
-import './models/human.js';
-import './models/cultures.js';
-import { layoutSettlements, streetSegments } from './world/settlements.js';
 import { Structures } from './world/structures.js';
 import { Vegetation } from './world/vegetation.js';
 import { Waters } from './render/rivers.js';
@@ -29,13 +27,20 @@ import { Traffic } from './life/traffic.js';
 import { Wildlife } from './life/wildlife.js';
 import { Dragons } from './life/dragons.js';
 import { FX } from './render/fx.js';
-import { Events } from './life/events.js';
+import { IncidentFX } from './life/events.js';
 import { HUD } from './ui/hud.js';
-import { catalogFromWorld, createState } from './sim/state.js';
-import { Simulation } from './sim/step.js';
-import { loadWorld, saveWorld, snapshot, parseSnapshot } from './sim/storage.js';
+import { showError, hideError } from './ui/errors.js';
+import { catalogFromWorld } from './sim/catalog.js';
+import { createWorld } from './sim/world-state.js';
+import { Simulation } from './sim/kernel.js';
+import { weatherSeconds } from './sim/weather.js';
+import { stateHash } from './sim/snapshot.js';
+import { IndexedDBBackend, MemoryBackend } from './persistence/backend.js';
+import { SaveService, acquireWorldLock } from './persistence/saves.js';
+import { validateAll } from './content/validate.js';
 
 const R = PLANET_RADIUS;
+const AUTOSAVE_MS = 60000;
 
 const canvas = document.getElementById('scene');
 const loading = document.getElementById('loading');
@@ -46,12 +51,28 @@ function progress(p, msg) {
   if (loadingBar) loadingBar.style.width = `${Math.round(p * 100)}%`;
   if (loadingText && msg) loadingText.textContent = msg;
 }
+const frameYield = () => new Promise(r => requestAnimationFrame(() => r()));
 
-async function frameYield() { await new Promise(r => requestAnimationFrame(() => r())); }
+function loadSettings() {
+  try { return { reducedMotion: 'system', calmEffects: false, ...JSON.parse(localStorage.getItem('sosaria-settings') || '{}') }; }
+  catch { return { reducedMotion: 'system', calmEffects: false }; }
+}
+
+async function openSaves() {
+  const lock = await acquireWorldLock();
+  try {
+    const backend = await IndexedDBBackend.open();
+    return { saves: new SaveService(backend, { tabId: Math.random().toString(36).slice(2, 10), readOnly: !lock.held }), lock, warning: lock.held ? '' : 'This world is already open in another tab. This tab can explore but will not save.' };
+  } catch (e) {
+    return { saves: new SaveService(new MemoryBackend(), { tabId: 'memory', readOnly: !lock.held }), lock, warning: `${e.message} Saves last only until this tab closes.` };
+  }
+}
 
 async function main() {
   progress(0.02, 'Kindling the forge');
   await frameYield();
+  const contentErrors = validateAll();
+  if (contentErrors.length) throw new Error(`Content definitions are invalid: ${contentErrors.slice(0, 3).join('; ')}`);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true });
   renderer.setClearColor(0x000000, 0);
@@ -64,27 +85,28 @@ async function main() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
 
-  const world = buildWorld(progress);
+  const { world, sites } = buildWorldDefinition(progress);
   await frameYield();
-  progress(0.82, 'Founding the towns');
-  await frameYield();
-  const tLay = performance.now();
-  const sites = layoutSettlements(world);
-  world.addSegments(streetSegments(sites, world.field));
-  const layMs = performance.now() - tLay;
+  console.log(`world ${world.buildMs.toFixed(0)}ms, towns ${world.layoutMs.toFixed(0)}ms, sea routes ${world.seaMs.toFixed(0)}ms`);
   progress(0.85, 'Waking the world');
 
   const pool = new WorkerPool(world.features);
   const terrain = new Terrain(scene, world.features, { pool, maxInFlight: 12 });
   terrain.preload(2);
 
+  const catalog = catalogFromWorld(world, sites);
+  const { saves, lock, warning: saveWarning } = await openSaves();
+  let restored = { state: null, warnings: [] }, migrated = null;
+  try {
+    restored = await saves.latest(catalog);
+    if (!restored.state) migrated = await saves.migrateLegacy(globalThis.localStorage, catalog);
+  } catch (e) { restored.warnings.push(e.message); }
+  const initial = restored.state || migrated?.state || createWorld(catalog);
+  const sim = new Simulation(catalog, initial);
   const clock = new WorldClock();
-  const catalog = catalogFromWorld(sites, world.roads);
-  let restored = { state: null, warning: '' };
-  try { restored = loadWorld(localStorage, catalog); } catch { restored.warning = 'Browser storage is unavailable. Export your world to keep it.'; }
-  const sim = new Simulation(catalog, restored.state || createState(catalog));
-  clock.sync(sim.seconds);
-  let simTime = sim.seconds;
+  clock.sync(sim.ticks);
+  const settings = loadSettings();
+
   const structures = new Structures(scene, world, sites);
   const vegetation = new Vegetation(scene, pool);
   const waters = new Waters(scene, world);
@@ -92,15 +114,15 @@ async function main() {
   const clouds = new Clouds(scene);
   const particles = buildEmitters(new Particles(scene), world, structures, waters, sites).build();
   const crowds = new Crowds(scene);
-  const people = new People(world, sites, clock, structures, crowds, sim);
-  const traffic = new Traffic(world, sites, crowds, sim);
+  const people = new People(world, sites, catalog, structures, crowds, sim);
+  const traffic = new Traffic(world, sites, crowds, sim, catalog);
   const wildlife = new Wildlife(world, crowds);
   const fx = new FX(scene);
   const dragons = new Dragons(scene, world, fx);
   const bubbles = new Bubbles(scene);
-  const nightLights = new NightLights(scene, structures.anchors);
+  const nightLights = new NightLights(scene, structures.anchors, structures);
   const weather = new WeatherVolume(scene);
-  console.log(`world ${world.buildMs.toFixed(0)}ms, towns ${layMs.toFixed(0)}ms, structures ${structures.count}`);
+  structures.applyState(sim.state);
 
   const sky = new SkyLights(scene);
   const post = new PostFX(renderer);
@@ -110,8 +132,9 @@ async function main() {
   const heightAt = (v) => Math.max(field.height(v.x, v.y, v.z), structures.roofAt(v));
   const controls = new GlobeCamera(camera, canvas, heightAt);
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  controls.reducedMotion = motion.matches;
-  motion.addEventListener('change', () => { controls.reducedMotion = motion.matches; });
+  const applyMotion = () => { controls.reducedMotion = settings.reducedMotion === 'on' || settings.reducedMotion === 'system' && motion.matches; };
+  applyMotion();
+  motion.addEventListener('change', applyMotion);
   const start = latLonToDir(30, -32);
   controls.setView(new THREE.Vector3(...latLonToDir(18, -62)), 420, 0);
 
@@ -136,26 +159,65 @@ async function main() {
   window.addEventListener('resize', resize);
   resize();
 
-  const app = { renderer, scene, camera, world, terrain, clock, sky, post, controls, pool, field, sites, structures, vegetation, waters, props, clouds, particles, people, crowds, traffic, wildlife, dragons, fx, bubbles, nightLights, weather, quality, THREE, sim, stats: {}, simTime: () => simTime, saveStatus: restored.warning || (restored.state ? 'World restored.' : 'A new history has begun.') };
-  app.save = () => {
-    try { saveWorld(localStorage, sim.state, catalog); app.events?.saveView(); app.saveStatus = `Saved at world second ${sim.state.tick}.`; return true; }
-    catch (e) { app.saveStatus = `Save unavailable: ${e.message} Export your world to keep it.`; return false; }
+  const saveStatus = [saveWarning, ...restored.warnings, restored.warning].filter(Boolean).join(' ');
+  const app = {
+    renderer, scene, camera, world, catalog, terrain, clock, sky, post, controls, pool, field, sites, structures, vegetation, waters, props, clouds, particles,
+    people, crowds, traffic, wildlife, dragons, fx, bubbles, nightLights, weather, quality, THREE, sim, saves, settings, stats: {}, slot: restored.meta?.slot || migrated?.meta.slot || null,
+    saveStatus: saveStatus || (restored.state ? `World restored from "${restored.meta.name}".` : migrated ? 'Your Sosaria 0.1 world was migrated into a new save slot.' : 'A new history has begun.'),
+    readOnly: saves.readOnly,
   };
-  app.exportWorld = () => snapshot(sim.state);
-  app.replaceWorld = state => {
-    sim.replace(state); simTime = sim.seconds; clock.sync(simTime);
-    people.active.clear(); people.lastScan = null; traffic.shipments.clear();
-    app.hud?.stopFollow(); app.events?.reset(); structures.applyState(state);
-    app.save();
+  // Saving never blocks the frame and never writes a world that failed mid-tick.
+  app.save = async (slot = app.slot || 'manual-1', options = {}) => {
+    if (sim.faulted) { app.saveStatus = 'Saving is disabled: the simulation stopped after an error. Your last good save is intact.'; return false; }
+    try {
+      const meta = await saves.save(slot, sim.state, catalog, options);
+      app.slot = slot; app.saveStatus = `Saved "${meta.name}" · ${meta.date}.`; return meta;
+    } catch (e) { app.saveStatus = `Not saved: ${e.message}`; return false; }
   };
-  app.importWorld = text => { const state = parseSnapshot(text, catalog); app.save(); app.replaceWorld(state); };
-  app.newWorld = seed => { app.save(); app.replaceWorld(createState(catalog, seed)); };
+  app.autosave = async () => {
+    if (sim.faulted || saves.readOnly) return false;
+    try { const meta = await saves.autosave(sim.state, catalog); app.lastAutosave = meta; return meta; }
+    catch (e) { app.saveStatus = `Autosave failed: ${e.message} Export your world to keep it.`; return false; }
+  };
+  app.exportWorld = () => saves.exportWorld(sim.state, { slot: app.slot, hash: stateHash(sim.state) });
+  app.replaceWorld = (state, slot = null) => {
+    sim.replace(state); clock.sync(sim.ticks);
+    people.reset(); traffic.shipments.clear();
+    app.hud?.reset(); structures.resetState?.(); structures.applyState(state);
+    app.slot = slot;
+  };
+  app.importWorld = async text => { const { state } = saves.importWorld(text, catalog); app.replaceWorld(state, null); return state; };
+  app.loadSlot = async slot => { const r = await saves.load(slot, catalog); app.replaceWorld(r.state, slot); app.saveStatus = r.warning || `Loaded "${r.meta.name}".`; return r; };
+  app.newWorld = seed => { app.replaceWorld(createWorld(catalog, seed), null); app.saveStatus = 'A new history has begun.'; };
+  // An experiment is an explicit branch: a new slot that remembers where it came from.
+  app.branch = async label => {
+    const origin = { slot: app.slot, tick: sim.state.tick, hash: stateHash(sim.state) };
+    const state = structuredClone(sim.state);
+    state.branch = { label: String(label || 'Experiment').slice(0, 60), origin, created: sim.state.tick };
+    app.replaceWorld(state, null);
+    const slot = `branch-${Date.now().toString(36)}`;
+    return app.save(slot, { name: state.branch.label });
+  };
   app.setQuality = mode => {
     quality.setMode(mode);
     try { localStorage.setItem('sosaria-quality', quality.mode); } catch {}
     resize();
   };
+  app.setSetting = (key, value) => {
+    settings[key] = value;
+    try { localStorage.setItem('sosaria-settings', JSON.stringify(settings)); } catch {}
+    applyMotion();
+  };
   window.__sosaria = app;
+
+  // WebGL context loss: stop drawing, keep the world, and offer a reload from the last save.
+  let contextLost = false;
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault(); contextLost = true; app.autosave();
+    showError({ title: 'Graphics paused', message: 'The browser lost the graphics context. The world is safe; it was autosaved. Waiting for the browser to restore graphics.',
+      actions: [{ label: 'Reload from save', run: () => location.reload() }] });
+  });
+  canvas.addEventListener('webglcontextrestored', () => { contextLost = false; resize(); hideError(); });
 
   // Wait until the coarse globe exists before revealing it.
   const t0 = performance.now();
@@ -165,40 +227,47 @@ async function main() {
     progress(0.85 + 0.15 * Math.min(1, terrain.readyCount / 102), 'Raising mountains');
     await new Promise(r => setTimeout(r, 30));
   }
-  app.events = new Events(app);
+  app.incidents = new IncidentFX(app);
   app.hud = new HUD(app);
   // Drift in from deep space toward Aldmere.
   controls.flyTo(new THREE.Vector3(...start), 235, { duration: 5.5 });
   loading.classList.add('done');
   setTimeout(() => loading.remove(), 1200);
 
-  let last = performance.now();
-  let fpsAcc = 0, fpsN = 0;
-  let lastSave = performance.now(), lastStructuresTick = -1;
-
-  let errors = 0;
-  document.addEventListener('visibilitychange', () => { last = performance.now(); quality.reset(); if (document.hidden) app.save(); });
-  window.addEventListener('pagehide', () => app.save());
+  let last = performance.now(), raf = 0, lastAutosave = performance.now(), structuresTick = -1, fpsAcc = 0, fpsN = 0;
+  // Hidden tabs do not simulate: returning never runs hours of famine in one frame.
+  const onVisibility = () => { last = performance.now(); quality.reset(); if (document.hidden) app.autosave(); };
+  const onHide = () => app.autosave();
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', onHide);
   const fogZones = [[19, -177, 9, 1.0], [-36, 134, 6, 0.6], [47.3, -14.2, 2.5, 0.35]].map(([la, lo, r, k]) => ({
     d: latLonToDir(la, lo), chord: 1 - Math.cos(r * Math.PI / 180), k,
   }));
+
   function frame(now) {
-    requestAnimationFrame(frame);
-    if (document.hidden) { last = now; return; }
-    try { step(now); } catch (e) { if (errors++ < 3) console.error(e); }
+    raf = requestAnimationFrame(frame);
+    if (document.hidden || contextLost) { last = now; return; }
+    try { step(now); }
+    catch (e) {
+      // Stop instead of looping on a broken state; the last valid save is untouched.
+      cancelAnimationFrame(raf);
+      console.error(e);
+      showError({ title: 'Sosaria stopped', message: `Something went wrong at world minute ${sim.state.tick}: ${e.message}. Nothing after the last save has been written.`,
+        actions: [{ label: 'Reload last save', run: () => location.reload() }, { label: 'Export this state for a report', run: () => app.hud?.download(app.exportWorld(), 'sosaria-error-state.json') }] });
+    }
   }
   function step(now) {
     const elapsed = (now - last) / 1000;
     const dt = Math.min(0.1, elapsed);
     last = now;
     if (quality.update(elapsed)) resize();
-    const before = sim.seconds, simStart = performance.now();
+    const simStart = performance.now();
     sim.advance(elapsed, clock.speed, clock.paused);
     app.stats.simMs = performance.now() - simStart;
-    simTime = sim.seconds;
-    const simDt = simTime - before;
-    clock.sync(simTime);
-    U.uTime.value = simTime;
+    const ticks = sim.ticks;
+    clock.sync(ticks);
+    const seconds = clock.seconds;
+    U.uTime.value = seconds;
 
     controls.update(dt);
     U.uCamPos.value.copy(camera.position);
@@ -212,42 +281,40 @@ async function main() {
 
     terrain.update(camera, now);
     vegetation.update(camera, alt);
-    const gameSeconds = simTime;
     const cover = 0.5 + 0.25 * Math.sin(clock.day * 0.9) + 0.1 * Math.sin(clock.day * 2.3);
-    clouds.update(simDt, gameSeconds, cover, field, camera.position);
+    const simDt = clock.paused ? 0 : sim.lastTicks * 420 / 1440;
+    clouds.update(simDt, weatherSeconds(ticks), cover, field, camera.position);
     clouds.mesh.castShadow = sunUp > 0.35;
-    props.update(U.uTime.value);
+    props.update(seconds);
     const lifeStart = performance.now();
-    if (app.events) app.events.update(simDt);
-    if (lastStructuresTick !== sim.state.tick) { structures.applyState(sim.state); lastStructuresTick = sim.state.tick; }
+    if (structuresTick !== sim.state.tick) { structures.applyState(sim.state); structuresTick = sim.state.tick; }
+    app.incidents.update(clock.paused ? 0 : dt);
     crowds.begin();
-    people.update(simDt, camera, alt);
-    traffic.update(gameSeconds, camera, alt);
-    wildlife.update(simTime, camera, alt, clock);
+    people.update(ticks, camera, alt, now);
+    traffic.update(seconds, camera, alt, ticks);
+    wildlife.update(seconds, camera, alt, clock);
     crowds.end();
-    dragons.update(simDt, simTime, clock, camera.position);
+    dragons.update(simDt, seconds, clock, camera.position);
     app.stats.lifeMs = performance.now() - lifeStart;
-    fx.update(simDt, camera);
-    bubbles.update(people, camera, U.uTime.value);
-    nightLights.update(controls.surfacePoint, camera.position, 1 - day, alt, sim.state, simTime);
+    fx.update(clock.paused && settings.photo ? 0 : dt, camera);
+    bubbles.update(people, camera, seconds);
+    nightLights.update(controls.surfacePoint, camera.position, 1 - day, alt, sim.state, seconds, structures);
     weather.update(controls.surfacePoint, field, alt);
-    if (app.hud) app.hud.update();
-    if (now - lastSave > 30000) { app.save(); lastSave = now; }
+    app.hud.update();
+    if (now - lastAutosave > AUTOSAVE_MS) { lastAutosave = now; app.autosave(); }
 
     // Morning mist and night fog; the Gloamfen and the Thornwood are always shrouded.
     const hourHere = clock.hourAt(Math.atan2(-controls.focus.z, controls.focus.x) * 180 / Math.PI);
     const fogAmount = 0.35 * Math.exp(-Math.pow((hourHere - 6.2) / 1.6, 2)) + 0.12 * (1 - day) + 0.25 * clouds.stormNear;
-    // Exposure from the local daylight at the focus, flattened out at orbit.
     const localExp = THREE.MathUtils.lerp(2.1, 1.0, day);
     const orbitK = THREE.MathUtils.smoothstep(alt, 25, 140);
     const exposure = THREE.MathUtils.lerp(localExp, 1.15, orbitK);
 
     renderer.info.reset();
     post.render(scene, camera, {
-      sunDir: sky.sunDir, moonDir: sky.moonDir, moon2Dir: sky.moon2Dir, time: U.uTime.value,
-      exposure, outline: 0.55 * (1 - THREE.MathUtils.smoothstep(alt, 6, 30)), outlineFar: Math.min(14, Math.max(2.5, alt * 3)), bloom: 0.4, sunI: 24, moonI: 0.35 + sky.phase * 0.6,
-      storm: clouds.stormNear,
-      fog: fogAmount, fogZones,
+      sunDir: sky.sunDir, moonDir: sky.moonDir, moon2Dir: sky.moon2Dir, time: seconds,
+      exposure, outline: 0.55 * (1 - THREE.MathUtils.smoothstep(alt, 6, 30)), outlineFar: Math.min(14, Math.max(2.5, alt * 3)), bloom: settings.calmEffects ? 0.2 : 0.4, sunI: 24, moonI: 0.35 + sky.phase * 0.6,
+      storm: clouds.stormNear, fog: fogAmount, fogZones,
     });
 
     app.stats.extra = { ...vegetation.stats, people: people.count };
@@ -255,10 +322,26 @@ async function main() {
     app.stats.frameMs = elapsed * 1000;
     app.stats.heapMB = performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null;
     app.stats.tris = renderer.info.render.triangles;
+    app.stats.achieved = sim.clock.achieved;
     fpsAcc += elapsed; fpsN++;
     if (fpsAcc > 0.5) { app.stats.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; app.stats.scale = quality.scale; app.stats.quality = quality.name; }
   }
-  requestAnimationFrame(frame);
+  raf = requestAnimationFrame(frame);
+
+  // Explicit teardown: listeners, workers, the world lock and GPU resources.
+  app.dispose = () => {
+    cancelAnimationFrame(raf);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', onHide);
+    window.removeEventListener('resize', resize);
+    motion.removeEventListener('change', applyMotion);
+    app.hud?.dispose?.();
+    nightLights.dispose();
+    pool.dispose();
+    lock.release?.();
+    scene.traverse(o => { o.geometry?.dispose?.(); const m = o.material; (Array.isArray(m) ? m : m ? [m] : []).forEach(x => x.dispose?.()); });
+    renderer.dispose();
+  };
 }
 
 function buildEmitters(P, world, structures, waters, sites) {

@@ -1,3 +1,5 @@
+> **Historical (0.1).** This describes the first living-world release of 27 September 2026. Version 0.2.0 replaces its simulation, saves and interface; see the [README](../README.md) and [CHANGELOG](../CHANGELOG.md). Worlds saved by 0.1 are migrated automatically ([saves](saves.md)).
+
 # Living world: first playable release
 
 This implements the first-release scope selected from [the blueprint](Sosaria_Living_World_Blueprint.md): continuity, named residents, a recoverable incident, material trade, carried knowledge, and limited interventions. The globe and its authored places remain the setting.

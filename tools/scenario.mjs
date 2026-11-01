@@ -1,33 +1,72 @@
-// Deterministic full-atlas scenario and metrics; no DOM or GPU required.
-import { createHash } from 'node:crypto';
-import { buildWorld } from '../src/world/build.js';
-import '../src/models/human.js';
-import '../src/models/cultures.js';
-import { layoutSettlements } from '../src/world/settlements.js';
-import { catalogFromWorld, createState, GOODS } from '../src/sim/state.js';
-import { stepWorld } from '../src/sim/step.js';
-import { materialBalance } from '../src/sim/economy.js';
-import { snapshot, parseSnapshot } from '../src/sim/storage.js';
+// The Section 8 slice as a reproducible scenario: `npm run test:scenario [-- --out dir]`.
+// Runs the Valdren grain network, burns the Highmoor granary at night in a drought with the keep
+// reserve emptied into it, and prints an event trace and the resource ledger proving what happened.
+// A second run saves mid-fire, reloads, and must reach the same state hash.
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { buildWorldDefinition } from '../src/world/definition.js';
+import { catalogFromWorld } from '../src/sim/catalog.js';
+import { createWorld } from '../src/sim/world-state.js';
+import { stepWorld, command } from '../src/sim/kernel.js';
+import { balance, transfer } from '../src/sim/inventory.js';
+import { serialize, stateHash } from '../src/sim/snapshot.js';
+import { loadText } from '../src/sim/migrate.js';
+import { resolve } from '../src/sim/history.js';
+import { stamp } from '../src/sim/clock.js';
+import { eventText } from '../src/ui/text.js';
 
-const world = buildWorld(), sites = layoutSettlements(world);
-const catalog = catalogFromWorld(sites, world.roads);
-const states = [createState(catalog), createState(catalog)];
-const times = [];
-for (let tick = 0; tick < 420 * 7; tick++) {
-  const start = performance.now(); stepWorld(states[0], catalog); times.push(performance.now() - start);
-  if (tick === 115) states[1] = parseSnapshot(snapshot(states[1]), catalog);
-  stepWorld(states[1], catalog);
+const outIndex = process.argv.indexOf('--out');
+const out = outIndex > 0 ? process.argv[outIndex + 1] : null;
+const { world, sites } = buildWorldDefinition();
+const catalog = catalogFromWorld(world, sites);
+const hm = catalog.byId.highmoor, granary = hm.granaries[0];
+const step = (s, n) => { for (let i = 0; i < n; i++) stepWorld(s, catalog); };
+
+function setup(state) {
+  step(state, 600);
+  while ((state.tick + 570) % 1440 < 1380) step(state, 1);
+  command(state, catalog, { type: 'drought', site: 'highmoor', days: 10 });
+  state.settlements.highmoor.water.level = 100;
+  const keep = `inv:${hm.keep}`;
+  transfer(state, keep, `inv:${granary}`, { ...state.inventories[keep].goods });
+  return command(state, catalog, { type: 'ignite', building: granary });
 }
-assert.equal(snapshot(states[0]), snapshot(states[1]));
-assert.deepEqual(materialBalance(states[0]), Object.fromEntries(GOODS.map(g => [g, 0])));
-assert.doesNotThrow(() => parseSnapshot(snapshot(states[0]), catalog));
-assert.ok(states[0].facts.some(f => f.type === 'repair_completed'));
-assert.ok(states[0].facts.some(f => f.type === 'shipment_delivered'));
-const ids = sites.flatMap(s => s.items.map(i => i.id));
-assert.equal(new Set(ids).size, ids.length);
-times.sort((a, b) => a - b);
-console.log(JSON.stringify({ seed: states[0].seed, tick: states[0].tick, sites: sites.length, residents: Object.keys(states[0].residents).length,
-  buildings: ids.length, roads: catalog.edges.length, hash: createHash('sha256').update(snapshot(states[0])).digest('hex'),
-  snapshotBytes: snapshot(states[0]).length, rulesP95Ms: times[Math.floor(times.length * 0.95)], rulesMaxMs: times.at(-1), materialBalance: materialBalance(states[0]),
-  facts: states[0].facts.length, reports: states[0].reports.length, recentTrips: states[0].trips.length }, null, 2));
+
+const a = createWorld(catalog);
+const ignite = setup(a);
+assert.ok(ignite.ok, ignite.message);
+const fireTick = a.tick;
+step(a, 20);
+const midFire = serialize(a);
+// Keep the incident record as it resolves: resolved incidents leave the live store after three days.
+let incident = null;
+for (let i = 20; i < 1440 * 6; i++) {
+  step(a, 1);
+  const x = Object.values(a.incidents).find(x => x.building === granary);
+  if (x?.ended !== null && x && !incident) incident = structuredClone(x);
+}
+
+const b = loadText(midFire, catalog).state;
+step(b, 1440 * 6 - 20);
+assert.equal(stateHash(b), stateHash(a), 'save and reload mid-fire reach the same world');
+
+const ctx = { state: a, catalog, resolve: id => resolve(a, id) };
+const interesting = /fire|alarm|relief|ration|repair|project|household|shipment_delivered|contract_agreed|report_received|intervention/;
+const trace = [...a.archive, ...a.events].filter(e => e.t >= fireTick - 1 && interesting.test(e.k) && (e.w === 'highmoor' || e.d?.buyer === 'highmoor' || e.k === 'report_received' && /fire/.test(resolve(a, e.d.about)?.k)))
+  .map(e => ({ id: e.id, tick: e.t, when: stamp(e.t, catalog.byId[e.w]?.lon), where: e.w, kind: e.k, causes: e.c, text: eventText(ctx, e) }));
+const ledger = { ...a.ledger, balance: balance(a) };
+assert.ok(Object.values(ledger.balance).every(n => n === 0), 'every good balances');
+const summary = {
+  seed: a.seed, finalTick: a.tick, hash: stateHash(a), reloadHash: stateHash(b), fireTick,
+  incident: incident && { outcome: incident.outcome, damage: incident.damage, lost: incident.lost, saved: incident.saved, water: incident.water, duration: incident.ended - incident.ignited },
+  highmoor: { policy: a.settlements.highmoor.policy, outlookDays: a.settlements.highmoor.outlook / 10 },
+  ledger,
+};
+for (const e of trace) console.log(`${e.when.padEnd(30)} ${e.where.padEnd(12)} ${e.text}`);
+console.log(JSON.stringify(summary, null, 2));
+if (out) {
+  mkdirSync(out, { recursive: true });
+  writeFileSync(join(out, 'granary-fire-trace.json'), JSON.stringify(trace, null, 1));
+  writeFileSync(join(out, 'granary-fire-ledger.json'), JSON.stringify(summary, null, 1));
+}

@@ -3,24 +3,25 @@
 import * as THREE from 'three';
 import { latLonToDir, PLANET_RADIUS } from '../core/sphere.js';
 import { U } from './shared.js';
-import { DAY_LENGTH, dayAt } from '../sim/time.js';
+import { REAL_SECONDS_PER_DAY, TICKS_PER_DAY, dayAt, declinationAt, localDayAt } from '../sim/clock.js';
 
 const R = PLANET_RADIUS;
 
+// Presentation view of canonical time. It never advances itself: the simulation's tick (plus the
+// interpolation fraction) is the only source, so the sky cannot run ahead of skipped work.
 export class WorldClock {
   constructor() {
-    this.dayLength = DAY_LENGTH;
+    this.dayLength = REAL_SECONDS_PER_DAY;
     this.speed = 1;
     this.paused = false;
-    // Start mid-morning in Highmoor.
-    this.day = subsolarDayFor(-36.2, 9.5);
+    this.ticks = 0;
+    this.day = dayAt(0);
   }
-  update(dt) {
-    if (!this.paused) this.day += (dt * this.speed) / this.dayLength;
-  }
-  sync(worldSeconds) { this.day = dayAt(worldSeconds); }
+  sync(ticks) { this.ticks = ticks; this.day = dayAt(ticks); }
+  // World seconds at the original pacing, for animation that predates the tick clock.
+  get seconds() { return this.ticks * REAL_SECONDS_PER_DAY / TICKS_PER_DAY; }
   get subsolarLon() { return wrapLon(-360 * this.day); }
-  get declination() { return 17 * Math.sin((2 * Math.PI * this.day) / 11); }
+  get declination() { return declinationAt(this.ticks); }
   // Hour of day (0..24) at a longitude.
   hourAt(lon) {
     let h = ((lon - this.subsolarLon) / 15 + 12) % 24;
@@ -41,15 +42,7 @@ export class WorldClock {
   }
   get dayNumber() { return this.localDay(0); }
   // Days turn over at local midnight.
-  localDay(lon) { return Math.max(1, Math.floor(this.day + lon / 360 + 0.5)); }
-}
-
-// Day fraction that puts `hour` at longitude `lon`.
-function subsolarDayFor(lon, hour) {
-  const sub = lon - (hour - 12) * 15;
-  let d = -sub / 360;
-  d -= Math.floor(d);
-  return d;
+  localDay(lon) { return localDayAt(this.ticks, lon); }
 }
 
 function wrapLon(l) {

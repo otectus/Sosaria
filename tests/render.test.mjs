@@ -137,19 +137,26 @@ test('sun shadows snap in light space, skip night, and release resized maps', ()
 
 test('repair scaffolding is instanced, stays attached to its building and releases GPU resources', () => {
   const structures = Object.create(Structures.prototype);
-  const rec = { instance: 0, model: 'house0', matrix: new THREE.Matrix4().makeTranslation(10, 20, 30) };
+  const rec = { instance: 0, model: 'house0', item: { id: 'home', model: 'house0' }, matrix: new THREE.Matrix4().makeTranslation(10, 20, 30) };
   structures.byBuilding = new Map([['home', rec]]);
-  structures.mesh = { setColorAt() {} };
+  const colors = [];
+  structures.mesh = { setColorAt(i, c) { colors.push(c.clone()); } };
   structures.changeOverlays = new THREE.Group();
-  structures.damageColors = { repairing: new THREE.Color(), repaired: new THREE.Color() };
-  structures.applyState({ buildings: { home: { status: 'repairing' } } });
+  structures.listeners = new Set(); structures.revision = 0;
+  structures.white = new THREE.Color(0xffffff); structures.tint = new THREE.Color();
+  const changes = [];
+  structures.onChange(c => changes.push(c.status));
+  structures.applyState({ buildings: { home: { id: 'home', model: 'house0', cond: 60, project: 'project:1', incident: null } }, projects: { 'project:1': { kind: 'repair' } } });
   const scaffold = rec.scaffold;
   assert.ok(scaffold.isInstancedMesh);
   assert.deepEqual(scaffold.position.toArray(), [10, 20, 30]);
+  assert.ok(colors.at(-1).r < 1, 'damage darkens the building');
   let disposed = 0;
   for (const resource of [scaffold, scaffold.geometry, scaffold.material]) resource.addEventListener('dispose', () => disposed++);
-  structures.applyState({ buildings: { home: { status: 'repaired' } } });
+  structures.applyState({ buildings: { home: { id: 'home', model: 'house0', cond: 100, project: null, incident: null } }, projects: {} });
   assert.equal(disposed, 3);
   assert.equal(structures.changeOverlays.children.length, 0);
   assert.equal(rec.scaffold, null);
+  assert.deepEqual(colors.at(-1).toArray(), [1, 1, 1]);
+  assert.deepEqual(changes, ['repairing', 'sound'], 'each change is published to subscribers (F11)');
 });
