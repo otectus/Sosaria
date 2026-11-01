@@ -3,12 +3,13 @@
 import * as THREE from 'three';
 import { latLonToDir, PLANET_RADIUS } from '../core/sphere.js';
 import { U } from './shared.js';
+import { DAY_LENGTH, dayAt } from '../sim/time.js';
 
 const R = PLANET_RADIUS;
 
 export class WorldClock {
   constructor() {
-    this.dayLength = 420; // real seconds per day at 1x
+    this.dayLength = DAY_LENGTH;
     this.speed = 1;
     this.paused = false;
     // Start mid-morning in Highmoor.
@@ -17,6 +18,7 @@ export class WorldClock {
   update(dt) {
     if (!this.paused) this.day += (dt * this.speed) / this.dayLength;
   }
+  sync(worldSeconds) { this.day = dayAt(worldSeconds); }
   get subsolarLon() { return wrapLon(-360 * this.day); }
   get declination() { return 17 * Math.sin((2 * Math.PI * this.day) / 11); }
   // Hour of day (0..24) at a longitude.

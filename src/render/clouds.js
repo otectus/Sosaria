@@ -5,26 +5,13 @@ import * as THREE from 'three';
 import { GLSL_COMMON, U, patchDepthMaterial } from './shared.js';
 import { latLonToDir, PLANET_RADIUS } from '../core/sphere.js';
 import { mulberry32 } from '../core/noise.js';
+import { STORMS, stormAt } from '../sim/weather.js';
 
 const R = PLANET_RADIUS;
 
-// Storm cells: base lat/lon, drift (deg per game-second), period of their life cycle.
-const STORMS = [
-  { lat: 38, lon: -52, dlon: 0.0035, dlat: 0.0006, period: 2600, phase: 0.1 },
-  { lat: 12, lon: -95, dlon: -0.004, dlat: 0.0004, period: 3100, phase: 0.55 },
-  { lat: -35, lon: 60, dlon: 0.003, dlat: -0.0005, period: 2300, phase: 0.3 },
-  { lat: 50, lon: 140, dlon: 0.0038, dlat: 0.0005, period: 2800, phase: 0.8 },
-];
-
 export function stormState(k, t, out = new THREE.Vector4()) {
-  const S = STORMS[k];
-  const cyc = (t / S.period + S.phase) % 1;
-  const life = Math.max(0, Math.sin(cyc * Math.PI * 2 - 0.3)) ; // active roughly 40% of the time
-  const intensity = Math.min(1, Math.pow(life, 0.6) * 1.15);
-  const lat = S.lat + 8 * Math.sin(t * S.dlat * 0.5 + k);
-  const lon = S.lon + t * S.dlon;
-  const d = latLonToDir(lat, ((lon + 180) % 360 + 360) % 360 - 180);
-  return out.set(d[0], d[1], d[2], intensity);
+  const s = stormAt(k, t);
+  return out.set(...s.dir, s.intensity);
 }
 
 const CLOUD_VERT_HEAD = /* glsl */`

@@ -112,6 +112,7 @@ export class GlobeCamera {
   }
 
   flyTo(dir, alt, opts = {}) {
+    if (this.reducedMotion) { this.flight = null; this.followFn = null; this.setView(dir, alt, opts.heading || 0); return; }
     const from = this.focus.clone(), to = dir.clone().normalize();
     const ang = from.angleTo(to);
     const dist = ang * R;
@@ -202,7 +203,7 @@ export class GlobeCamera {
       if (hit) this.flyTo(hit, clampAlt(this.alt * 0.3), { duration: 1.2 });
     });
     window.addEventListener('keydown', e => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.target && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'SUMMARY'].includes(e.target.tagName)) return;
       this.keys.add(e.key.toLowerCase());
     });
     window.addEventListener('keyup', e => this.keys.delete(e.key.toLowerCase()));

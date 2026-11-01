@@ -6,6 +6,7 @@ import { ACT } from '../render/rig.js';
 import { TOOL } from '../models/characters.js';
 import { mulberry32, hashString } from '../core/noise.js';
 import { PLANET_RADIUS, dirToLatLon } from '../core/sphere.js';
+import { residentSchedule, POPULATION } from '../sim/state.js';
 
 const R = PLANET_RADIUS;
 
@@ -27,8 +28,7 @@ const PAL = {
 const GUARD_TABARD = { human: C(0x2a4f9e), elf: C(0x2c8a9a), dwarf: C(0xc79a3c), beast: C(0x9e3a2a), draconic: C(0xa3201c), undead: C(0x2f4f3a), fae: C(0xb35ad6) };
 
 // Inhabitants per settlement kind.
-const POP = { capital: 150, city: 100, port: 70, town: 64, village: 34, hamlet: 14, castle: 24, fort: 18, hold: 48, mine: 18,
-  enclave: 44, glade: 18, circle: 10, camp: 40, temple: 56, necropolis: 40, barrow: 8, monastery: 14, ruin: 0, stilts: 24, lighthouse: 8 };
+const POP = POPULATION;
 
 const _m = new THREE.Matrix4();
 
@@ -50,7 +50,7 @@ export function localMatrix(out, d, h, e, n, fx, fy, s) {
   return out;
 }
 
-class Nav {
+export class Nav {
   constructor(site) {
     this.nodes = []; // [x, y]
     this.adj = [];
@@ -104,8 +104,8 @@ class Nav {
       const came = new Map([[s, -1]]);
       const queue = [s];
       let found = false;
-      while (queue.length) {
-        const c = queue.shift();
+      for (let head = 0; head < queue.length; head++) {
+        const c = queue[head];
         if (c === g) { found = true; break; }
         for (const nb of this.adj[c]) if (!came.has(nb)) { came.set(nb, c); queue.push(nb); }
       }
@@ -113,20 +113,19 @@ class Nav {
         let c = g;
         while (c !== -1) { pts.push(this.nodes[c]); c = came.get(c); }
         pts.reverse();
-      }
+      } else return null;
     } else pts.push(this.nodes[s]);
     pts.push([bx, by]);
     return pts;
   }
 }
 
-let AGENT_ID = 1;
-
 class SiteSim {
   constructor(site, world, people) {
     this.site = site; this.world = world; this.people = people;
     this.field = world.field;
-    this.nav = new Nav(site);
+    this.nav = people.navigation.get(site.s.id);
+    if (!this.nav) { this.nav = new Nav(site); people.navigation.set(site.s.id, this.nav); }
     this.culture = site.s.culture === 'ruin' ? 'human' : site.s.culture;
     this.race = this.culture;
     const [lat, lon] = dirToLatLon(site.d);
@@ -142,6 +141,7 @@ class SiteSim {
   spawn() {
     const site = this.site, s = site.s, rnd = this.rnd;
     const total = POP[s.kind] ?? 20;
+    const residents = this.people.simulation ? Object.values(this.people.simulation.state.residents).filter(r => r.site === s.id) : [];
     if (!total) return;
     const doors = site.doors;
     const homes = doors.filter(d => d.kind === 'home' || d.kind === 'farm');
@@ -190,13 +190,14 @@ class SiteSim {
     else if (cult === 'undead') { push('priest', 5); push('guard', 4); push('elder', 6); push('smith', 1); }
     while (roles.length < total) roles.push('villager');
     roles.length = total;
+    residents.forEach((r, i) => { roles[i] = r.role; });
 
     const pal = PAL[cult] || PAL.human;
     const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
     for (const role of roles) {
       const home = homes.length ? pick(homes) : { x: site.plaza[0] + (rnd() - 0.5), y: site.plaza[1] + (rnd() - 0.5) };
       const ag = {
-        id: AGENT_ID++, role, race: cult, home,
+        id: this.people.sites.indexOf(site) * 1000 + this.agents.length + 1, role, race: cult, home,
         colA: role === 'guard' ? (GUARD_TABARD[cult] || pick(pal.cloth)) : pick(pal.cloth), colB: pick(pal.pants), skin: pick(pal.skin), hair: pick(pal.hair),
         scale: (role === 'child' ? 0.62 : 0.9 + rnd() * 0.14) * 0.78,
         x: home.x, y: home.y, fx: 0, fy: 1, path: null, pi: 0, act: ACT.idle, tool: 0, speed: 0.06 + rnd() * 0.025,
@@ -216,6 +217,11 @@ class SiteSim {
       if (role === 'bard') ag.work = tavern ? { x: tavern.x, y: tavern.y } : null;
       ag.tavern = tavern ? { x: tavern.x + (rnd() - 0.5) * 0.12, y: tavern.y + (rnd() - 0.5) * 0.12 } : null;
       ag.name = this.people.nameFor(ag, rnd);
+      const resident = residents[this.agents.length];
+      if (resident) {
+        ag.personId = resident.id; ag.name = resident.name;
+        ag.home = resident.home; ag.work = resident.work;
+      }
       // Start partway into the day so the town looks lived-in immediately.
       this.planNext(ag, true);
       if (ag.path) { const k = Math.floor(rnd() * ag.path.length); ag.pi = k; const p = ag.path[k]; ag.x = p[0]; ag.y = p[1]; }
@@ -288,6 +294,7 @@ class SiteSim {
     if (!init && ag.goInside && !asleep) ag.goInside = false;
     const p = this.nav.path(ag.x, ag.y, target.x, target.y);
     ag.path = p; ag.pi = 0;
+    if (!p) { ag.state = 'act'; ag.act = ACT.idle; ag.busyUntil = this.people.time + 30; ag.goInside = false; return; }
     ag.state = 'walk';
     if (init && !(ag.goInside)) { ag.state = 'act'; ag.x = target.x; ag.y = target.y; ag.path = null; ag.busyUntil = this.people.time + rnd() * dur; ag.act = act; ag.tool = tool; }
     if (init && ag.goInside) { ag.inside = true; ag.x = target.x; ag.y = target.y; ag.state = 'act'; ag.busyUntil = this.people.time + rnd() * dur; ag.path = null; }
@@ -297,6 +304,7 @@ class SiteSim {
     const now = this.people.time;
     const al = this.alarm && this.alarm.until > now ? this.alarm : null;
     for (const ag of this.agents) {
+      if (ag.personId) { this.updateResident(ag); continue; }
       if (al) { this.react(ag, al, dt); continue; }
       if (ag.reacting) { ag.reacting = false; this.planNext(ag); }
       if (ag.state === 'walk') {
@@ -318,7 +326,7 @@ class SiteSim {
         else if (ag.act === ACT.talk || ag.act === ACT.idle || ag.act === ACT.sit) {
           // Face the nearest neighbour when chatting.
           if (!ag.faceT || now > ag.faceT) {
-            ag.faceT = now + 3 + Math.random() * 4;
+            ag.faceT = now + 3 + this.rnd() * 4;
             let best = null, bd = 0.25;
             for (const o of this.agents) { if (o === ag || o.inside) continue; const dd = Math.hypot(o.x - ag.x, o.y - ag.y); if (dd < bd) { bd = dd; best = o; } }
             if (best) { const dx = best.x - ag.x, dy = best.y - ag.y, l = Math.hypot(dx, dy) || 1; ag.fx = dx / l; ag.fy = dy / l; if (ag.act !== ACT.sit) ag.act = ACT.talk; }
@@ -326,6 +334,41 @@ class SiteSim {
         }
       }
     }
+  }
+
+  updateResident(ag) {
+    const sim = this.people.simulation, person = sim.state.residents[ag.personId];
+    if (!person) return;
+    if (person.location !== person.site || sim.state.trips.some(t => t.carrier === person.id && t.status === 'travelling')) { ag.inside = true; return; }
+    const schedule = residentSchedule(sim.state, person, sim.catalog, this.people.time);
+    ag.doing = schedule.activity;
+    if (ag.scheduleKey !== schedule.key) {
+      ag.scheduleKey = schedule.key;
+      ag.itinerary = this.nav.path(schedule.from.x, schedule.from.y, schedule.to.x, schedule.to.y);
+      ag.lengths = [0];
+      if (ag.itinerary) for (let i = 1; i < ag.itinerary.length; i++) {
+        const a = ag.itinerary[i - 1], b = ag.itinerary[i];
+        ag.lengths.push(ag.lengths[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+      }
+    }
+    const path = ag.itinerary;
+    if (!path) {
+      ag.x = schedule.from.x; ag.y = schedule.from.y; ag.inside = false; ag.act = ACT.idle;
+      ag.doing = 'waiting for a reachable path'; return;
+    }
+    const distance = ag.lengths.at(-1) * schedule.progress;
+    let k = 1;
+    while (k < path.length - 1 && ag.lengths[k] < distance) k++;
+    const a = path[Math.max(0, k - 1)], b = path[Math.min(k, path.length - 1)];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const f = Math.min(1, Math.max(0, (distance - ag.lengths[k - 1]) / (length || 1)));
+    ag.x = a[0] + (b[0] - a[0]) * f; ag.y = a[1] + (b[1] - a[1]) * f;
+    if (length) { ag.fx = (b[0] - a[0]) / length; ag.fy = (b[1] - a[1]) / length; }
+    ag.inside = schedule.inside; ag.state = schedule.progress < 1 ? 'walk' : 'act';
+    ag.act = ag.state === 'walk' ? ACT.walk : ag.role === 'guard' ? ACT.guard : ag.role === 'farmer' ? ACT.farm : ag.role === 'smith' ? ACT.hammer : ACT.talk;
+    ag.tool = ag.role === 'guard' ? TOOL.spear : ag.role === 'farmer' ? TOOL.hoe : ag.role === 'smith' ? TOOL.hammer : TOOL.none;
+    if (schedule.activity === 'passing buckets') { ag.tool = TOOL.bucket; ag.act = ACT.carry; }
+    if (schedule.activity === 'waiting for flour') { ag.act = ACT.idle; ag.tool = TOOL.none; }
   }
 
   react(ag, al, dt) {
@@ -426,10 +469,12 @@ export const DOING = {
 };
 
 export class People {
-  constructor(world, sites, clock, structures, crowds) {
+  constructor(world, sites, clock, structures, crowds, simulation = null) {
     this.world = world; this.sites = sites; this.clock = clock; this.structures = structures;
     this.time = 0;
     this.active = new Map();
+    this.navigation = new Map();
+    this.simulation = simulation;
     this.crowds = {};
     for (const race of ['human', 'elf', 'dwarf', 'fae', 'beast', 'undead', 'draconic']) this.crowds[race] = crowds.get(race);
   }
@@ -441,16 +486,20 @@ export class People {
   }
 
   describe(ag, site) {
-    return { title: ag.name, sub: `${RACE_TITLES[ag.race]} ${ROLE_TITLES[ag.role] || ''} of ${site.s.name}`, doing: DOING[ag.act] || 'going about their day' };
+    const person = ag.personId && this.simulation?.state.residents[ag.personId];
+    const trip = person && this.simulation.state.trips.find(t => t.carrier === person.id && t.status === 'travelling');
+    const away = trip ? `travelling to ${this.simulation.catalog.byId[trip.to].name}` : person && person.location !== person.site ? `visiting ${this.simulation.catalog.byId[person.location].name}` : null;
+    return { title: ag.name, sub: `${RACE_TITLES[ag.race]} ${ROLE_TITLES[ag.role] || ag.role} of ${site.s.name}${ag.personId ? ' · known resident' : ''}`, doing: away || ag.doing || DOING[ag.act] || 'going about their day' };
   }
 
   simFor(site) { return this.active.get(site.s.id) || null; }
 
   update(dt, camera, alt) {
-    this.time += dt;
+    this.time = this.simulation ? this.simulation.seconds : this.time + dt;
     const cam = camera.position;
     // Activate settlements near the camera (limit to the closest few).
-    if (!this.lastScan || this.time - this.lastScan > 0.5) {
+    if (!this.lastCamera || this.lastCamera.distanceToSquared(cam) > 0.01 || this.lastAlt !== alt || !this.lastScan || this.time - this.lastScan > 0.5) {
+      this.lastCamera = cam.clone(); this.lastAlt = alt;
       this.lastScan = this.time;
       const want = [];
       if (alt < 7) {

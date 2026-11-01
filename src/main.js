@@ -31,6 +31,9 @@ import { Dragons } from './life/dragons.js';
 import { FX } from './render/fx.js';
 import { Events } from './life/events.js';
 import { HUD } from './ui/hud.js';
+import { catalogFromWorld, createState } from './sim/state.js';
+import { Simulation } from './sim/step.js';
+import { loadWorld, saveWorld, snapshot, parseSnapshot } from './sim/storage.js';
 
 const R = PLANET_RADIUS;
 
@@ -76,6 +79,12 @@ async function main() {
   terrain.preload(2);
 
   const clock = new WorldClock();
+  const catalog = catalogFromWorld(sites, world.roads);
+  let restored = { state: null, warning: '' };
+  try { restored = loadWorld(localStorage, catalog); } catch { restored.warning = 'Browser storage is unavailable. Export your world to keep it.'; }
+  const sim = new Simulation(catalog, restored.state || createState(catalog));
+  clock.sync(sim.seconds);
+  let simTime = sim.seconds;
   const structures = new Structures(scene, world, sites);
   const vegetation = new Vegetation(scene, pool);
   const waters = new Waters(scene, world);
@@ -83,8 +92,8 @@ async function main() {
   const clouds = new Clouds(scene);
   const particles = buildEmitters(new Particles(scene), world, structures, waters, sites).build();
   const crowds = new Crowds(scene);
-  const people = new People(world, sites, clock, structures, crowds);
-  const traffic = new Traffic(world, sites, crowds);
+  const people = new People(world, sites, clock, structures, crowds, sim);
+  const traffic = new Traffic(world, sites, crowds, sim);
   const wildlife = new Wildlife(world, crowds);
   const fx = new FX(scene);
   const dragons = new Dragons(scene, world, fx);
@@ -100,6 +109,9 @@ async function main() {
   // Camera ground: terrain, or the roof of whatever stands there.
   const heightAt = (v) => Math.max(field.height(v.x, v.y, v.z), structures.roofAt(v));
   const controls = new GlobeCamera(camera, canvas, heightAt);
+  const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  controls.reducedMotion = motion.matches;
+  motion.addEventListener('change', () => { controls.reducedMotion = motion.matches; });
   const start = latLonToDir(30, -32);
   controls.setView(new THREE.Vector3(...latLonToDir(18, -62)), 420, 0);
 
@@ -124,7 +136,20 @@ async function main() {
   window.addEventListener('resize', resize);
   resize();
 
-  const app = { renderer, scene, camera, world, terrain, clock, sky, post, controls, pool, field, sites, structures, vegetation, waters, props, clouds, particles, people, crowds, traffic, wildlife, dragons, fx, bubbles, nightLights, weather, quality, THREE, stats: {}, simTime: () => simTime };
+  const app = { renderer, scene, camera, world, terrain, clock, sky, post, controls, pool, field, sites, structures, vegetation, waters, props, clouds, particles, people, crowds, traffic, wildlife, dragons, fx, bubbles, nightLights, weather, quality, THREE, sim, stats: {}, simTime: () => simTime, saveStatus: restored.warning || (restored.state ? 'World restored.' : 'A new history has begun.') };
+  app.save = () => {
+    try { saveWorld(localStorage, sim.state, catalog); app.events?.saveView(); app.saveStatus = `Saved at world second ${sim.state.tick}.`; return true; }
+    catch (e) { app.saveStatus = `Save unavailable: ${e.message} Export your world to keep it.`; return false; }
+  };
+  app.exportWorld = () => snapshot(sim.state);
+  app.replaceWorld = state => {
+    sim.replace(state); simTime = sim.seconds; clock.sync(simTime);
+    people.active.clear(); people.lastScan = null; traffic.shipments.clear();
+    app.hud?.stopFollow(); app.events?.reset(); structures.applyState(state);
+    app.save();
+  };
+  app.importWorld = text => { const state = parseSnapshot(text, catalog); app.save(); app.replaceWorld(state); };
+  app.newWorld = seed => { app.save(); app.replaceWorld(createState(catalog, seed)); };
   app.setQuality = mode => {
     quality.setMode(mode);
     try { localStorage.setItem('sosaria-quality', quality.mode); } catch {}
@@ -148,11 +173,12 @@ async function main() {
   setTimeout(() => loading.remove(), 1200);
 
   let last = performance.now();
-  let simTime = 0;
   let fpsAcc = 0, fpsN = 0;
+  let lastSave = performance.now(), lastStructuresTick = -1;
 
   let errors = 0;
-  document.addEventListener('visibilitychange', () => { last = performance.now(); quality.reset(); });
+  document.addEventListener('visibilitychange', () => { last = performance.now(); quality.reset(); if (document.hidden) app.save(); });
+  window.addEventListener('pagehide', () => app.save());
   const fogZones = [[19, -177, 9, 1.0], [-36, 134, 6, 0.6], [47.3, -14.2, 2.5, 0.35]].map(([la, lo, r, k]) => ({
     d: latLonToDir(la, lo), chord: 1 - Math.cos(r * Math.PI / 180), k,
   }));
@@ -166,8 +192,13 @@ async function main() {
     const dt = Math.min(0.1, elapsed);
     last = now;
     if (quality.update(elapsed)) resize();
-    clock.update(dt);
-    U.uTime.value += dt;
+    const before = sim.seconds, simStart = performance.now();
+    sim.advance(elapsed, clock.speed, clock.paused);
+    app.stats.simMs = performance.now() - simStart;
+    simTime = sim.seconds;
+    const simDt = simTime - before;
+    clock.sync(simTime);
+    U.uTime.value = simTime;
 
     controls.update(dt);
     U.uCamPos.value.copy(camera.position);
@@ -181,25 +212,27 @@ async function main() {
 
     terrain.update(camera, now);
     vegetation.update(camera, alt);
-    const gameSeconds = clock.day * clock.dayLength;
+    const gameSeconds = simTime;
     const cover = 0.5 + 0.25 * Math.sin(clock.day * 0.9) + 0.1 * Math.sin(clock.day * 2.3);
-    clouds.update(dt, gameSeconds, cover, field, camera.position);
+    clouds.update(simDt, gameSeconds, cover, field, camera.position);
     clouds.mesh.castShadow = sunUp > 0.35;
     props.update(U.uTime.value);
-    const simDt = dt * Math.min(4, clock.paused ? 0 : clock.speed);
-    simTime += simDt;
+    const lifeStart = performance.now();
+    if (app.events) app.events.update(simDt);
+    if (lastStructuresTick !== sim.state.tick) { structures.applyState(sim.state); lastStructuresTick = sim.state.tick; }
     crowds.begin();
     people.update(simDt, camera, alt);
-    traffic.update(gameSeconds * 0.25, camera, alt);
+    traffic.update(gameSeconds, camera, alt);
     wildlife.update(simTime, camera, alt, clock);
     crowds.end();
     dragons.update(simDt, simTime, clock, camera.position);
-    fx.update(dt, camera);
+    app.stats.lifeMs = performance.now() - lifeStart;
+    fx.update(simDt, camera);
     bubbles.update(people, camera, U.uTime.value);
-    nightLights.update(controls.surfacePoint, camera.position, 1 - day, alt);
+    nightLights.update(controls.surfacePoint, camera.position, 1 - day, alt, sim.state, simTime);
     weather.update(controls.surfacePoint, field, alt);
-    if (app.events) app.events.update(simDt);
     if (app.hud) app.hud.update();
+    if (now - lastSave > 30000) { app.save(); lastSave = now; }
 
     // Morning mist and night fog; the Gloamfen and the Thornwood are always shrouded.
     const hourHere = clock.hourAt(Math.atan2(-controls.focus.z, controls.focus.x) * 180 / Math.PI);
@@ -219,6 +252,8 @@ async function main() {
 
     app.stats.extra = { ...vegetation.stats, people: people.count };
     app.stats.calls = renderer.info.render.calls;
+    app.stats.frameMs = elapsed * 1000;
+    app.stats.heapMB = performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null;
     app.stats.tris = renderer.info.render.triangles;
     fpsAcc += elapsed; fpsN++;
     if (fpsAcc > 0.5) { app.stats.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; app.stats.scale = quality.scale; app.stats.quality = quality.name; }

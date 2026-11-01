@@ -5,6 +5,7 @@ import { PLANET_RADIUS, dirToLatLon, latLonToDir } from '../core/sphere.js';
 import { timeOfDayName } from '../render/sky.js';
 import { REGIONS } from '../world/atlas.js';
 import { DOING } from '../life/people.js';
+import { LivingWorldUI } from './living-world.js';
 
 const R = PLANET_RADIUS;
 
@@ -95,6 +96,8 @@ export class HUD {
     for (const e of app.events.log.slice().reverse()) this.addEntry(e);
     this.setSpeed(1);
     if (window.innerWidth < 1100) this.togglePanel('chronicle', false);
+    this.living = new LivingWorldUI(this);
+    for (const id of ['atlas', 'chronicle']) document.getElementById(id).inert = !document.getElementById(id).classList.contains('open');
   }
 
   bind() {
@@ -151,13 +154,17 @@ export class HUD {
     const el = document.getElementById(id);
     const open = force ?? !el.classList.contains('open');
     el.classList.toggle('open', open);
+    el.inert = !open;
+    if (open && (id === 'chronicle' || window.innerWidth < 760)) this.living?.toggle(false);
     const btn = document.getElementById(id === 'atlas' ? 'btn-atlas' : 'btn-chron');
     btn.setAttribute('aria-expanded', String(open));
     btn.classList.toggle('on', open);
     if (open && window.innerWidth < 760) {
       const other = id === 'atlas' ? 'chronicle' : 'atlas';
       document.getElementById(other).classList.remove('open');
+      document.getElementById(other).inert = true;
       document.getElementById(other === 'atlas' ? 'btn-atlas' : 'btn-chron').classList.remove('on');
+      document.getElementById(other === 'atlas' ? 'btn-atlas' : 'btn-chron').setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -265,7 +272,7 @@ export class HUD {
       const b = e.target.closest('.alink');
       if (!b) return;
       if (b.dataset.dragon) this.follow({ kind: 'dragon', ref: app.dragons.list[+b.dataset.dragon] });
-      else if (b.dataset.site) this.flyToSite(app.sites.find(s => s.s.id === b.dataset.site));
+      else if (b.dataset.site) this.living.openTown(b.dataset.site);
       else if (b.dataset.wonder) { const l = app.world.landmarks.find(x => x.id === b.dataset.wonder); this.flyTo(l.world, l.model === 'floatisle' || l.model === 'runeblade' || l.model === 'titan' ? 5 : 2.4); }
       else if (b.dataset.beast) {
         const g = app.wildlife.groups.find(x => x.key === b.dataset.beast);
@@ -276,7 +283,7 @@ export class HUD {
   }
 
   flyToSite(site) {
-    const alt = { capital: 7, city: 5.5, port: 4.5, town: 3.8, village: 2.8 }[site.s.kind] || 2.6;
+    const alt = { capital: 6, city: 5.5, port: 4.5, town: 3.8, village: 2.8 }[site.s.kind] || 2.6;
     this.stopFollow(true);
     this.app.controls.flyTo(site.centerWorld.clone().normalize(), alt);
   }
@@ -347,11 +354,16 @@ export class HUD {
     if (hit.kind === 'person') return app.people.describe(hit.ref, hit.sim.site);
     if (hit.kind === 'traffic') {
       const g = hit.ref;
+      if (g.trip) {
+        const t = g.trip, state = app.sim.state, catalog = app.sim.catalog;
+        return { title: `${state.residents[t.carrier].name}'s ${Object.keys(t.cargo).length ? 'wagon' : 'courier journey'}`, sub: `${catalog.byId[t.from].name} → ${catalog.byId[t.to].name}`,
+          doing: `${Object.entries(t.cargo).map(([good, n]) => `${n} ${good}`).join(', ') || 'carrying reports'} · ${t.status === 'travelling' ? `ETA ${Math.max(0, t.etaTick - state.tick)} world seconds` : t.status}` };
+      }
       const names = { wagon: 'Merchant wagon', rider: 'Courier on horseback', walkers: 'Travellers on foot', patrol: 'Road patrol', party: 'A band of adventurers', caravan: 'Trade caravan',
         hunters: 'Hunting party', boarriders: 'Boar-riders', orecart: 'Dwarven ore cart', porters: 'Kobold porters', cog: 'Merchant cog', warship: 'Valdren warship', ghostship: 'A ghost ship',
         pirate: 'Pirate brigantine', fishboat: 'Fishing boat', rowboat: 'Rowboat', canoe: 'Dugout canoe', swanboat: 'Elven swan-boat', raft: 'Hide raft' };
       const where = g.kind === 'road' ? `on the road between ${siteName(app, g.name.split('→')[0])} and ${siteName(app, g.name.split('→')[1])}` : g.kind === 'river' ? 'on the river' : 'at sea';
-      return { title: names[g.type] || 'Travellers', sub: where, doing: g.kind === 'road' ? 'bound for market' : 'under sail' };
+      return { title: names[g.type] || 'Travellers', sub: where, doing: g.kind === 'road' ? 'ambient journey · no tracked cargo' : 'under sail · ambient journey' };
     }
     if (hit.kind === 'beast') return { title: hit.ref.name, sub: 'Wild creature', doing: hit.ref.S.prowl ? 'on the prowl' : hit.ref.S.fly ? 'riding the thermals' : 'wandering its range' };
     return null;
@@ -377,8 +389,18 @@ export class HUD {
     this.followTarget = hit;
     const getPos = () => {
       if (hit.kind === 'dragon') return hit.ref.pos;
-      if (hit.kind === 'person') return hit.ref.inside ? null : hit.ref.world;
-      if (hit.kind === 'traffic') return hit.ref.pos;
+      if (hit.kind === 'person') {
+        if (!hit.ref.personId) return hit.ref.inside ? null : hit.ref.world;
+        const local = app.people.active.get(hit.sim.site.s.id);
+        const current = local?.agents.find(a => a.personId === hit.ref.personId);
+        if (current) { hit.ref = current; hit.sim = local; }
+        const trip = app.sim.state.trips.find(t => t.carrier === hit.ref.personId && t.status === 'travelling');
+        if (trip) return app.traffic.shipments.get(trip.id)?.pos || null;
+        const person = app.sim.state.residents[hit.ref.personId];
+        if (person.location !== person.site) return app.sites.find(s => s.s.id === person.location)?.plazaWorld || null;
+        return current && !current.inside && current.world || hit.sim.site.toWorld(hit.ref.home.x, hit.ref.home.y);
+      }
+      if (hit.kind === 'traffic') return hit.ref.trip && hit.ref.trip.status !== 'travelling' ? null : hit.ref.pos;
       if (hit.kind === 'beast') return hit.ref.pos && hit.ref.pos.lengthSq() > 1 ? hit.ref.pos : hit.ref.center;
       return null;
     };
@@ -400,6 +422,7 @@ export class HUD {
   update() {
     const app = this.app;
     this.frame++;
+    this.living?.update();
     this.updateLabels();
     if (this.followTarget && !app.controls.followFn) this.stopFollow(true);
     if (this.frame % 10 !== 0) return;

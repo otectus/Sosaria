@@ -20,7 +20,7 @@ export class NightLights {
       this.lights.push(l);
     }
     this.cands = [];
-    for (const key of ['light', 'fire', 'forge', 'rune']) for (const a of anchors[key]) this.cands.push({ p: a.p, t: TYPES[key], ghost: a.rec && /ghost|crypt|mausoleum|gothic/.test(a.rec.model) });
+    for (const key of ['light', 'fire', 'forge', 'rune']) for (const a of anchors[key]) this.cands.push({ p: a.p, t: TYPES[key], building: a.rec?.item?.id, ghost: a.rec && /ghost|crypt|mausoleum|gothic/.test(a.rec.model) });
     // Coarse spatial hash for fast nearest queries.
     this.cell = 2;
     this.hash = new Map();
@@ -33,7 +33,7 @@ export class NightLights {
   }
   key(p) { return `${Math.floor(p.x / this.cell)},${Math.floor(p.y / this.cell)},${Math.floor(p.z / this.cell)}`; }
 
-  update(focus, camPos, night, alt) {
+  update(focus, camPos, night, alt, state = null, time = performance.now() / 1000) {
     this.frame++;
     if (this.frame % 4 !== 0) return;
     const active = night > 0.05 && alt < 5;
@@ -42,7 +42,11 @@ export class NightLights {
     const cx = Math.floor(focus.x / this.cell), cy = Math.floor(focus.y / this.cell), cz = Math.floor(focus.z / this.cell);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
       const arr = this.hash.get(`${cx + i},${cy + j},${cz + k}`);
-      if (arr) for (const c of arr) near.push([c.p.distanceToSquared(focus) + c.p.distanceToSquared(camPos) * 0.5, c]);
+      if (arr) for (const c of arr) {
+        const b = state?.buildings[c.building];
+        if (b && b.status !== 'repaired') continue;
+        near.push([c.p.distanceToSquared(focus) + c.p.distanceToSquared(camPos) * 0.5, c]);
+      }
     }
     near.sort((a, b) => a[0] - b[0]);
     for (let i = 0; i < POOL; i++) {
@@ -52,7 +56,7 @@ export class NightLights {
       l.position.copy(c.p).addScaledVector(c.p.clone().normalize(), 0.03);
       l.color.set(c.ghost ? 0x6bff9a : c.t.color);
       l.distance = c.t.dist;
-      l.intensity = c.t.intensity * night * (0.9 + 0.1 * Math.sin(performance.now() * 0.008 + i));
+      l.intensity = c.t.intensity * night * (0.9 + 0.1 * Math.sin(time * 8 + i));
     }
   }
 }

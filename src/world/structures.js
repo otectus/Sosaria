@@ -55,6 +55,42 @@ export class Structures {
     this.mesh = bm;
     scene.add(bm);
     this.geometryIds = ids;
+    this.byBuilding = new Map(this.records.filter(r => r.item?.id).map(r => [r.item.id, r]));
+    this.changeOverlays = new THREE.Group();
+    this.changeOverlays.name = 'living-world-building-traces';
+    scene.add(this.changeOverlays);
+    this.damageColors = { burning: new THREE.Color(0x6b3d28), damaged: new THREE.Color(0x4a4240), repairing: new THREE.Color(0x987b54), repaired: new THREE.Color(0xffffff) };
+  }
+
+  applyState(state) {
+    for (const [id, rec] of this.byBuilding) {
+      const b = state.buildings[id];
+      const status = b?.status || 'repaired';
+      if (rec.conditionStatus === status || !b && !rec.conditionStatus) continue;
+      rec.conditionStatus = status;
+      this.mesh.setColorAt(rec.instance, this.damageColors[status]);
+      if (rec.scaffold) {
+        this.changeOverlays.remove(rec.scaffold);
+        rec.scaffold.dispose();
+        rec.scaffold.geometry.dispose(); rec.scaffold.material.dispose(); rec.scaffold = null;
+      }
+      if (status === 'repairing') {
+        const model = getModel(rec.model);
+        const w = model.footprint[0] * 1.18, d = model.footprint[1] * 1.18, h = model.height * 1.1, t = 0.009;
+        const beams = [];
+        for (const x of [-w / 2, w / 2]) for (const z of [-d / 2, d / 2]) beams.push([x, h / 2, z, t, h, t]);
+        for (const y of [h * 0.25, h * 0.6, h]) {
+          for (const z of [-d / 2, d / 2]) beams.push([0, y, z, w, t, t]);
+          for (const x of [-w / 2, w / 2]) beams.push([x, y, 0, t, t, d]);
+        }
+        for (const z of [-d / 2, d / 2]) beams.push([0, h * 0.6, z, w, t, 0.035]);
+        const scaffold = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xc49a61, roughness: 1 }), beams.length);
+        const matrix = new THREE.Matrix4();
+        beams.forEach(([x, y, z, sx, sy, sz], i) => { matrix.makeScale(sx, sy, sz).setPosition(x, y, z); scaffold.setMatrixAt(i, matrix); });
+        scaffold.castShadow = true; scaffold.receiveShadow = true; scaffold.applyMatrix4(rec.matrix); rec.scaffold = scaffold;
+        this.changeOverlays.add(scaffold);
+      }
+    }
   }
 
   // Swap a placed record's model (for construction sites that progress over days).

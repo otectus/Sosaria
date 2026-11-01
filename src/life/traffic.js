@@ -80,9 +80,12 @@ const PARTY = [
 ];
 
 export class Traffic {
-  constructor(world, sites, crowds) {
+  constructor(world, sites, crowds, simulation = null) {
     this.world = world; this.crowds = crowds;
     this.field = world.field;
+    this.simulation = simulation;
+    this.shipments = new Map();
+    this.roadTracks = new Map(world.roads.map(r => [`road:${r.a}:${r.b}`, { track: new Track(r.dirs, r.levels), a: r.a }]));
     this.groups = [];
     this.tmp = { d: [0, 0, 0], level: 0, tx: 0, ty: 0, tz: 0 };
     const siteById = new Map(sites.map(s => [s.s.id, s]));
@@ -175,6 +178,36 @@ export class Traffic {
       this.visible.push(g);
       this.drawGroup(g, s, resting);
     }
+    if (this.simulation) this.updateShipments(camera, alt);
+  }
+
+  updateShipments(camera, alt) {
+    const state = this.simulation.state;
+    const live = new Set();
+    for (const trip of state.trips) {
+      const parked = trip.status === 'delivered' && state.tick - trip.completed < 30;
+      if (trip.status !== 'travelling' && !parked) continue;
+      const road = this.roadTracks.get(trip.route);
+      if (!road) continue;
+      live.add(trip.id);
+      let g = this.shipments.get(trip.id);
+      if (!g) {
+        g = { kind: 'road', type: Object.keys(trip.cargo).length ? 'wagon' : 'rider', track: road.track, cult: 'human',
+          dirSign: road.a === trip.from ? 1 : -1, seed: hashString(trip.id) % 1000, name: `${trip.from}→${trip.to}`,
+          colors: this.pickColors('human', mulberry32(hashString(trip.id))), pos: new THREE.Vector3() };
+        this.shipments.set(trip.id, g);
+      }
+      g.trip = trip;
+      const paused = parked || state.routes[trip.route].closedUntil > state.tick;
+      const progress = Math.min(1, (trip.progress + (paused ? 0 : this.simulation.time.fraction)) / trip.duration);
+      const s = (g.dirSign === 1 ? progress : 1 - progress) * g.track.length;
+      const T = g.track.at(s, this.tmp);
+      g.pos.set(...T.d).multiplyScalar(R + T.level);
+      if (alt < 12 && g.pos.distanceTo(camera.position) < 24) {
+        this.visible.push(g); this.drawGroup(g, s, paused);
+      }
+    }
+    for (const id of this.shipments.keys()) if (!live.has(id)) this.shipments.delete(id);
   }
 
   drawGroup(g, s, resting) {

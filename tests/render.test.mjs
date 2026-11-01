@@ -9,6 +9,7 @@ import { FX } from '../src/render/fx.js';
 import { PostFX } from '../src/render/post.js';
 import { SkyLights, WorldClock } from '../src/render/sky.js';
 import { getModel } from '../src/models/registry.js';
+import { Structures } from '../src/world/structures.js';
 import '../src/models/human.js';
 
 test('auto quality responds to sustained load, recovers slowly, and bounds resolution', () => {
@@ -132,4 +133,23 @@ test('sun shadows snap in light space, skip night, and release resized maps', ()
   sky.setShadowSize(1024);
   assert.equal(disposed, true);
   assert.equal(sky.sun.shadow.map, null);
+});
+
+test('repair scaffolding is instanced, stays attached to its building and releases GPU resources', () => {
+  const structures = Object.create(Structures.prototype);
+  const rec = { instance: 0, model: 'house0', matrix: new THREE.Matrix4().makeTranslation(10, 20, 30) };
+  structures.byBuilding = new Map([['home', rec]]);
+  structures.mesh = { setColorAt() {} };
+  structures.changeOverlays = new THREE.Group();
+  structures.damageColors = { repairing: new THREE.Color(), repaired: new THREE.Color() };
+  structures.applyState({ buildings: { home: { status: 'repairing' } } });
+  const scaffold = rec.scaffold;
+  assert.ok(scaffold.isInstancedMesh);
+  assert.deepEqual(scaffold.position.toArray(), [10, 20, 30]);
+  let disposed = 0;
+  for (const resource of [scaffold, scaffold.geometry, scaffold.material]) resource.addEventListener('dispose', () => disposed++);
+  structures.applyState({ buildings: { home: { status: 'repaired' } } });
+  assert.equal(disposed, 3);
+  assert.equal(structures.changeOverlays.children.length, 0);
+  assert.equal(rec.scaffold, null);
 });
