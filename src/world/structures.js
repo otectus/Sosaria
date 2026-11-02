@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { getModel } from '../models/registry.js';
+import { PROJECTS } from '../content/recipes.js';
 import { makeKitMaterial } from '../render/materials.js';
 import { PLANET_RADIUS, tangentFrame, slerp, arcDist } from '../core/sphere.js';
 
@@ -33,12 +34,14 @@ export class Structures {
     this.addBridges(world.bridges);
     this.addAqueduct(world.aqueduct);
 
-    // Batch everything.
-    const models = [...new Set(this.records.map(r => r.model))];
+    // Batch everything, including every model a building lifecycle can switch to (F06).
+    const lifecycle = Object.values(PROJECTS).flatMap(p => [...p.stages.map(s => s.model), p.complete]).filter(Boolean);
+    const models = [...new Set([...this.records.map(r => r.model), ...lifecycle])];
     let vcount = 0;
     for (const name of models) vcount += getModel(name).geometry.attributes.position.count;
     this.material = makeKitMaterial({ key: 'buildings', side: THREE.DoubleSide, rim: 0.4 });
-    const bm = new THREE.BatchedMesh(this.records.length + 16, vcount + 64, 0, this.material);
+    this.vertexCapacity = vcount + 64;
+    const bm = new THREE.BatchedMesh(this.records.length + 16, this.vertexCapacity, 0, this.material);
     bm.perObjectFrustumCulled = true;
     bm.sortObjects = false;
     bm.castShadow = true;
@@ -55,22 +58,109 @@ export class Structures {
     this.mesh = bm;
     scene.add(bm);
     this.geometryIds = ids;
+    this.byBuilding = new Map(this.records.filter(r => r.item?.id).map(r => [r.item.id, r]));
+    this.changeOverlays = new THREE.Group();
+    this.changeOverlays.name = 'living-world-building-traces';
+    scene.add(this.changeOverlays);
+    this.listeners = new Set();
+    this.revision = 0;
+    this.white = new THREE.Color(0xffffff);
+    this.tint = new THREE.Color();
   }
 
-  // Swap a placed record's model (for construction sites that progress over days).
+  // Invalidation contract (F11): every render-side change to a building is published.
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit(change) { this.revision++; for (const fn of this.listeners) fn(change); }
+
+  // Project the authoritative building state: model stage, condition tint, repair scaffolding.
+  applyState(state) {
+    for (const b of Object.values(state.buildings)) {
+      const rec = this.byBuilding.get(b.id);
+      if (!rec) continue;
+      if (b.model && b.model !== rec.model) this.setModel(rec, b.model);
+      const project = b.project ? state.projects[b.project] : null;
+      const status = b.incident ? 'burning' : project?.kind === 'repair' ? 'repairing' : b.cond < 100 ? 'damaged' : 'sound';
+      const key = `${status}:${b.cond}`;
+      if (rec.conditionKey === key) continue;
+      const changed = rec.conditionStatus !== status;
+      rec.conditionKey = key; rec.conditionStatus = status;
+      // Scorch darkens with damage; a burning building glows ember-dark.
+      const k = Math.max(0, Math.min(1, (100 - b.cond) / 80));
+      this.tint.setRGB(1 - 0.62 * k, 1 - 0.66 * k, 1 - 0.68 * k);
+      if (status === 'burning') this.tint.lerp(new THREE.Color(0x6b3d28), 0.6);
+      if (status === 'repairing') this.tint.lerp(new THREE.Color(0xd0b48a), 0.35);
+      this.mesh.setColorAt(rec.instance, b.cond >= 100 && status === 'sound' ? this.white : this.tint);
+      if (!changed) continue;
+      this.emit({ kind: 'condition', building: b.id, status, rec });
+      if (rec.scaffold) {
+        this.changeOverlays.remove(rec.scaffold);
+        rec.scaffold.dispose();
+        rec.scaffold.geometry.dispose(); rec.scaffold.material.dispose(); rec.scaffold = null;
+      }
+      if (status === 'repairing') {
+        const model = getModel(rec.model);
+        const w = model.footprint[0] * 1.18, d = model.footprint[1] * 1.18, h = model.height * 1.1, t = 0.009;
+        const beams = [];
+        for (const x of [-w / 2, w / 2]) for (const z of [-d / 2, d / 2]) beams.push([x, h / 2, z, t, h, t]);
+        for (const y of [h * 0.25, h * 0.6, h]) {
+          for (const z of [-d / 2, d / 2]) beams.push([0, y, z, w, t, t]);
+          for (const x of [-w / 2, w / 2]) beams.push([x, y, 0, t, t, d]);
+        }
+        for (const z of [-d / 2, d / 2]) beams.push([0, h * 0.6, z, w, t, 0.035]);
+        const scaffold = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xc49a61, roughness: 1 }), beams.length);
+        const matrix = new THREE.Matrix4();
+        beams.forEach(([x, y, z, sx, sy, sz], i) => { matrix.makeScale(sx, sy, sz).setPosition(x, y, z); scaffold.setMatrixAt(i, matrix); });
+        scaffold.castShadow = true; scaffold.receiveShadow = true; scaffold.applyMatrix4(rec.matrix); rec.scaffold = scaffold;
+        this.changeOverlays.add(scaffold);
+      }
+    }
+  }
+
+  // Before projecting a different world: every building back to its authored model and colour.
+  resetState() {
+    for (const rec of this.byBuilding.values()) {
+      if (rec.item && rec.model !== rec.item.model) this.setModel(rec, rec.item.model);
+      if (rec.conditionKey) { this.mesh.setColorAt(rec.instance, this.white); rec.conditionKey = null; rec.conditionStatus = null; }
+      if (rec.scaffold) { this.changeOverlays.remove(rec.scaffold); rec.scaffold.dispose(); rec.scaffold.geometry.dispose(); rec.scaffold.material.dispose(); rec.scaffold = null; }
+    }
+  }
+
+  // Register a geometry later, growing the batch when it is full (BatchedMesh capacity growth).
+  ensureGeometry(name) {
+    let id = this.geometryIds.get(name);
+    if (id !== undefined) return id;
+    const geo = getModel(name).geometry, need = geo.attributes.position.count;
+    if (this.mesh.unusedVertexCount < need) { this.vertexCapacity = Math.ceil((this.vertexCapacity + need) * 1.25); this.mesh.setGeometrySize(this.vertexCapacity, 0); }
+    id = this.mesh.addGeometry(geo);
+    this.geometryIds.set(name, id);
+    return id;
+  }
+
+  // Swap a placed record's model and keep everything derived from it in agreement: anchors,
+  // roof heights for the camera, bounds and picking, then announce the change.
   setModel(rec, name) {
     if (rec.model === name) return;
-    let id = this.geometryIds.get(name);
-    if (id === undefined) return;
+    const id = this.ensureGeometry(name);
     this.mesh.setGeometryIdAt(rec.instance, id);
+    const old = rec.model;
     rec.model = name;
+    for (const key of Object.keys(this.anchors)) this.anchors[key] = this.anchors[key].filter(a => a.rec !== rec);
+    this.addAnchors(rec);
+    this.removeHeight(rec); this.addHeight(rec);
+    this.mesh.computeBoundingSphere();
+    this.emit({ kind: 'model', building: rec.item?.id || null, from: old, to: name, rec });
   }
 
   push(model, matrix, site = null, item = null) {
     const rec = { model, matrix, site, item };
     this.records.push(rec);
-    const m = getModel(model);
-    const A = m.anchors;
+    this.addAnchors(rec);
+    return rec;
+  }
+
+  addAnchors(rec) {
+    const { matrix, site } = rec;
+    const A = getModel(rec.model).anchors;
     const tmp = new THREE.Vector3();
     const tx = (p) => tmp.set(p[0], p[1], p[2]).applyMatrix4(matrix).clone();
     for (const key of ['smoke', 'fire', 'forge', 'light', 'rune', 'seat', 'work']) {
@@ -81,7 +171,6 @@ export class Structures {
     for (const w of A.wheel) this.anchors.wheel.push({ p: tx(w), site, rec, size: w[3], matrix });
     for (const b of A.beam) this.anchors.beam.push({ p: tx(b), site, rec, size: b[3] ?? 1, matrix });
     if (A.door) this.anchors.door.push({ p: tx(A.door), site, rec });
-    return rec;
   }
 
   addSite(site) {
@@ -172,19 +261,29 @@ export class Structures {
   buildHeightHash() {
     this.hcell = 0.6;
     this.hhash = new Map();
-    const pos = new THREE.Vector3(), sc = new THREE.Vector3(), q = new THREE.Quaternion();
-    for (const r of this.records) {
-      const m = getModel(r.model);
-      r.matrix.decompose(pos, q, sc);
-      const radius = Math.max(m.footprint[0] * sc.x, m.footprint[1] * sc.z) * 0.5;
-      if (radius < 0.03 || m.height * sc.y < 0.05) continue;
-      const top = pos.length() - R + m.height * sc.y;
-      const e = { p: pos.clone(), r: radius, top, up: pos.clone().normalize() };
-      const k = this.hkey(pos);
-      if (!this.hhash.has(k)) this.hhash.set(k, []);
-      this.hhash.get(k).push(e);
-    }
+    for (const r of this.records) this.addHeight(r);
   }
+  addHeight(r) {
+    const pos = new THREE.Vector3(), sc = new THREE.Vector3(), q = new THREE.Quaternion();
+    const m = getModel(r.model);
+    r.matrix.decompose(pos, q, sc);
+    const radius = Math.max(m.footprint[0] * sc.x, m.footprint[1] * sc.z) * 0.5;
+    if (radius < 0.03 || m.height * sc.y < 0.05) return;
+    const top = pos.length() - R + m.height * sc.y;
+    const e = { p: pos.clone(), r: radius, top, up: pos.clone().normalize(), rec: r };
+    const k = this.hkey(pos);
+    if (!this.hhash.has(k)) this.hhash.set(k, []);
+    this.hhash.get(k).push(e);
+    r.height = e;
+  }
+  removeHeight(r) {
+    if (!r.height) return;
+    const list = this.hhash.get(this.hkey(r.height.p));
+    if (list) list.splice(list.indexOf(r.height), 1);
+    r.height = null;
+  }
+  // Highest point of one building, for picking and camera clearance.
+  topOf(rec) { return rec.height ? rec.height.top : 0; }
   hkey(p) { const c = this.hcell; return `${Math.floor(p.x / c)},${Math.floor(p.y / c)},${Math.floor(p.z / c)}`; }
   // Highest roof over a unit direction (or -Infinity).
   roofAt(dir) {

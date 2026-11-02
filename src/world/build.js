@@ -234,7 +234,8 @@ export function buildWorld(onProgress = () => {}) {
         const mid = slerp(a, b, 0.5);
         const ha = field.height(a[0], a[1], a[2]), hb = field.height(b[0], b[1], b[2]);
         const rv = nearestRiver(rivers, mid);
-        bridges.push({ a, b, mid, deckH: Math.max(ha, hb, (rv ? rv.level : 0) + 0.12) + 0.02, length: arcDist(a, b), river: rv ? rv.id : null });
+        bridges.push({ a, b, mid, deckH: Math.max(ha, hb, (rv ? rv.level : 0) + 0.12) + 0.02, length: arcDist(a, b), river: rv ? rv.id : null,
+          road: `road:${road.a}:${road.b}`, at: (i0 + i1) / 2 / Math.max(1, road.dirs.length - 1) });
       }
     }
   }

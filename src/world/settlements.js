@@ -88,7 +88,8 @@ class Site {
     const sl = this.slopeOK(x, y, w, d, th, opts.maxDrop ?? 0.1);
     if (!opts.force && !sl.ok) return null;
     if (!opts.noCollide) this.boxes.push(b);
-    const it = { model, x, y, th, scale: sc, sy: opts.sy ?? sc, h: opts.h ?? (sl.base - (opts.sink ?? 0.0)), tag: opts.tag || null, role: opts.role || null };
+    const it = { id: `building:${this.s.id}:${this.items.length}`, model, x, y, th, scale: sc, sy: opts.sy ?? sc, h: opts.h ?? (sl.base - (opts.sink ?? 0.0)), tag: opts.tag || null, role: opts.role || null };
+    if (!opts.noCollide) it.box = b;
     this.items.push(it);
     if (m.anchors.door && opts.role !== 'none') {
       const a = m.anchors.door;

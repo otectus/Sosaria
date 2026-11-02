@@ -1,0 +1,87 @@
+{
+ "seed": "sosaria-living-1",
+ "finalTick": 9450,
+ "hash": "045be4ed940aaf9413dcea3c98",
+ "reloadHash": "045be4ed940aaf9413dcea3c98",
+ "fireTick": 810,
+ "incident": {
+  "outcome": "destroyed",
+  "damage": 100,
+  "lost": {
+   "grain": 1479,
+   "flour": 112
+  },
+  "saved": {
+   "flour": 48
+  },
+  "water": 55,
+  "duration": 134
+ },
+ "highmoor": {
+  "policy": "normal",
+  "outlookDays": 16.3
+ },
+ "ledger": {
+  "initial": {
+   "grain": 4018,
+   "flour": 840,
+   "iron": 58,
+   "tools": 15,
+   "bread": 528,
+   "fish": 110,
+   "timber": 470,
+   "firewood": 850,
+   "stone": 482,
+   "coin": 15800,
+   "provisions": 8344
+  },
+  "produced": {
+   "provisions": 12132,
+   "fish": 400,
+   "timber": 138,
+   "firewood": 276,
+   "bread": 1740,
+   "grain": 11790,
+   "flour": 1200,
+   "tools": 8
+  },
+  "eaten": {
+   "provisions": 5332,
+   "bread": 1664,
+   "grain": 260,
+   "fish": 52
+  },
+  "used": {
+   "flour": 1160,
+   "firewood": 74,
+   "grain": 1200,
+   "stone": 64,
+   "iron": 16,
+   "timber": 48,
+   "tools": 2
+  },
+  "spoiled": {
+   "provisions": 1489,
+   "bread": 209,
+   "fish": 238
+  },
+  "burned": {
+   "grain": 1479,
+   "flour": 112
+  },
+  "lost": {},
+  "balance": {
+   "grain": 0,
+   "flour": 0,
+   "bread": 0,
+   "fish": 0,
+   "provisions": 0,
+   "timber": 0,
+   "firewood": 0,
+   "stone": 0,
+   "iron": 0,
+   "tools": 0,
+   "coin": 0
+  }
+ }
+}

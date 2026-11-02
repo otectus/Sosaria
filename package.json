@@ -1,11 +1,17 @@
 {
   "name": "sosaria",
-  "version": "1.0.0",
-  "description": "An explorable Three.js fantasy planet of towns, wilderness, magic and dragons.",
+  "version": "0.2.0",
+  "description": "An explorable Three.js fantasy planet of towns, wilderness, magic and dragons, with a persistent simulated grain network.",
   "type": "module",
   "private": true,
+  "engines": { "node": ">=22" },
   "scripts": {
     "start": "node serve.mjs",
-    "test": "node --import ./tools/three-node.mjs --test tests/render.test.mjs"
+    "test": "node --import ./tools/three-node.mjs --test tests/*.test.mjs",
+    "test:scenario": "node --import ./tools/three-node.mjs tools/scenario.mjs",
+    "test:endurance": "node --import ./tools/three-node.mjs tools/endurance.mjs",
+    "test:browser": "node tools/browser-check.mjs",
+    "validate": "node --import ./tools/three-node.mjs tools/validate.mjs",
+    "map": "node --import ./tools/three-node.mjs tools/map.mjs"
   }
 }

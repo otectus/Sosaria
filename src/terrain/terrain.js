@@ -246,6 +246,10 @@ export class Terrain {
       this.pool.run({ type: 'chunk', face: n.face, level: n.level, ix: n.ix, iy: n.iy }).then(data => {
         this.pending.delete(n.key);
         this.onChunk(n, data);
+      }, () => {
+        // Failed, cancelled or stale: forget the request so the chunk can be asked for again.
+        this.pending.delete(n.key);
+        if (n.state === 1) n.state = 0;
       });
     }
   }

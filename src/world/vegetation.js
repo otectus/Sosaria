@@ -50,6 +50,9 @@ class Layer {
       c.bySpecies = pack(d);
       c.state = 2;
       if (this.active.has(cell)) this.dirty = true;
+    }, () => {
+      this.inflight--;
+      this.cells.delete(cell);
     });
   }
 
