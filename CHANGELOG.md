@@ -7,7 +7,7 @@ Milestones M0 and M1 of the handoff: a trustworthy baseline and a persistent liv
 ### Added
 
 - A headless, deterministic simulation kernel (`src/sim`): one-minute ticks with an exact accumulator, saved random streams, stable IDs, an ordered due-work queue, and validated commands.
-- Persistent residents in every settlement (1,158 people in 640 households) with species, culture, faction and occupation kept separate; needs, a decision order with explained tasks, memories and acquaintances. On-screen people are views of these records.
+- Persistent residents in every settlement (1,158 people; 640 households in the default world) with species, culture, faction and occupation kept separate; needs, a decision order with explained tasks, memories and acquaintances. On-screen people are views of these records.
 - Jobs with reserved inputs, carried goods, labour, interruption and recovery; fields with seasons, sowing, tending and harvest; mills, bakeries, woodcutting, fishing and forges in the Valdren grain network (Millbrook, Brightwater, Highmoor, Saltmere); a documented subsistence economy elsewhere.
 - Conserved, transactional inventories with a per-good ledger; civic allocation of rations; bounded prices; procurement and relief contracts paid between treasuries; weekly realm dues and grants.
 - Journeys on roads and validated sea routes, with loading, unloading queues, closures of roads and bridges, rerouting, waiting, exactly-once delivery, return trips, and news carried by travellers (reports and rumours with confidence).

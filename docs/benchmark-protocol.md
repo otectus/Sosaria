@@ -21,7 +21,13 @@ Balanced desktop: 60 FPS at 1080p, with a 95th percentile around 25 ms or lower 
 
 ## Headless measurements (recorded)
 
-`npm run test:endurance` measures the kernel alone in Node. On the development machine (Linux, Node 26.12.1) the full atlas costs about 55–110 µs per tick depending on load: roughly 13–25 ms of CPU per real second at 64×, which is 219 ticks a second. The browser check records frame metrics under headless Chrome's SwiftShader software renderer. Those numbers (frames of 150 ms at orbit and over a second in town) describe a CPU rasterizer and are not GPU results.
+`npm run test:endurance` measures the kernel alone in Node. On the development machine (Linux, Node 26.12.1) the full atlas averaged 45–59 µs per tick over ten simulated years, and 70–118 µs on the busiest day of each run ([evidence](evidence/endurance-10x10.md)). At 64×, which is 219 ticks a second, that is about 10–13 ms of CPU per real second on average and up to 26 ms on the busiest days. The browser check records frame metrics under headless Chrome's SwiftShader software renderer. Those numbers (frames of 150 ms at orbit and over a second in town) describe a CPU rasterizer and are not GPU results.
+
+## Recorded evidence for 0.2.0
+
+- [`evidence/endurance-10x10.md`](evidence/endurance-10x10.md): ten seeds × ten simulated years.
+- [`evidence/granary-fire-trace.json`](evidence/granary-fire-trace.json) and [`evidence/granary-fire-ledger.json`](evidence/granary-fire-ledger.json): the Section 8 event trace and resource ledger from `npm run test:scenario -- --out docs/evidence`.
+- [`evidence/browser-check-results.json`](evidence/browser-check-results.json): the 13 headless-Chrome checks with their (software-rendered) metrics and device string.
 
 ## Not yet measured
 

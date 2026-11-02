@@ -1,0 +1,59 @@
+{
+  "url": "http://localhost:5174",
+  "device": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+    "cores": 24,
+    "webgl2": true,
+    "renderer": "WebKit WebGL"
+  },
+  "checks": [
+    "the world loads",
+    "panel state, focus restoration and semantic labels (F10)",
+    "Atlas search opens the settlement inspector",
+    "residents persist across unload while paused (F02, F03)",
+    "person inspector, then an explicit follow",
+    "fire, response and repair in an experiment branch",
+    "IndexedDB save survives a reload with the same state hash",
+    "export/import round trip and corrupt import rejection",
+    "pause freezes the world; speed state is announced",
+    "Chronicle search leads to causes and effects",
+    "graphics context loss is explained and recovered",
+    "a second tab is read-only and refuses to save",
+    "narrow layout keeps one drawer and the toolbar on screen"
+  ],
+  "metrics": [
+    {
+      "name": "orbit",
+      "frameMedianMs": 1050,
+      "rulesMaxMs": 0,
+      "drawCalls": 218,
+      "triangles": 1066381,
+      "heapMB": 51.17791271209717,
+      "quality": "performance"
+    },
+    {
+      "name": "town",
+      "frameMedianMs": 1133.2000000000007,
+      "rulesMaxMs": 0.10000000149011612,
+      "drawCalls": 146,
+      "triangles": 2123889,
+      "heapMB": 73.49640655517578,
+      "quality": "performance"
+    },
+    {
+      "name": "fire",
+      "frameMedianMs": 1116.699999999997,
+      "rulesMaxMs": 0,
+      "drawCalls": 198,
+      "triangles": 2452642,
+      "heapMB": 123.38213539123535,
+      "quality": "performance"
+    },
+    {
+      "name": "achieved-speed-at-64x",
+      "achieved": 41.49550813205573
+    }
+  ],
+  "errors": [],
+  "note": "Headless Chrome with SwiftShader software rendering: timings are diagnostic, not GPU performance."
+}

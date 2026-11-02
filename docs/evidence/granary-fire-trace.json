@@ -1,0 +1,658 @@
+[
+ {
+  "id": "event:39",
+  "tick": 810,
+  "when": "22 Summer, Year 1 · 22:59",
+  "where": "highmoor",
+  "kind": "intervention",
+  "causes": [],
+  "text": "Observer intervention: a drought for 10 days (experiment)."
+ },
+ {
+  "id": "event:40",
+  "tick": 810,
+  "when": "22 Summer, Year 1 · 22:59",
+  "where": "highmoor",
+  "kind": "intervention",
+  "causes": [],
+  "text": "Observer intervention: a test fire (experiment)."
+ },
+ {
+  "id": "event:41",
+  "tick": 810,
+  "when": "22 Summer, Year 1 · 22:59",
+  "where": "highmoor",
+  "kind": "fire_started",
+  "causes": [
+   "event:40"
+  ],
+  "text": "Fire broke out in the granary at Highmoor (a test fire started by the observer)."
+ },
+ {
+  "id": "event:42",
+  "tick": 832,
+  "when": "22 Summer, Year 1 · 23:22",
+  "where": "highmoor",
+  "kind": "fire_alarm",
+  "causes": [
+   "event:41"
+  ],
+  "text": "The alarm sounded in Highmoor: the granary is burning. It was noticed after 22 min."
+ },
+ {
+  "id": "event:43",
+  "tick": 900,
+  "when": "22 Summer, Year 1 · 23:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:44",
+  "tick": 930,
+  "when": "23 Summer, Year 1 · 00:00",
+  "where": "millbrook",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Millbrook agreed to sell 400 grain to Highmoor for 400 pennies."
+ },
+ {
+  "id": "event:45",
+  "tick": 944,
+  "when": "23 Summer, Year 1 · 01:14",
+  "where": "highmoor",
+  "kind": "fire_resolved",
+  "causes": [
+   "event:41",
+   "event:42"
+  ],
+  "text": "The fire in the granary at Highmoor destroyed the building after 2 h. 18 people fought it with 55 buckets. Lost: 1479 grain and 112 flour; saved: 48 flour. Condition 0%."
+ },
+ {
+  "id": "event:46",
+  "tick": 944,
+  "when": "23 Summer, Year 1 · 01:14",
+  "where": "highmoor",
+  "kind": "repair_planned",
+  "causes": [
+   "event:45"
+  ],
+  "text": "Highmoor planned the repair of the granary (0% sound): 3 stages."
+ },
+ {
+  "id": "event:48",
+  "tick": 1170,
+  "when": "23 Summer, Year 1 · 04:59",
+  "where": "highmoor",
+  "kind": "ration_policy",
+  "causes": [],
+  "text": "Highmoor began rationing: 6.6 days of food for 150 people."
+ },
+ {
+  "id": "event:49",
+  "tick": 1236,
+  "when": "23 Summer, Year 1 · 06:06",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:9"
+  ],
+  "text": "Nimue Starwhisper delivered 25 fish from Saltmere to Highmoor."
+ },
+ {
+  "id": "event:51",
+  "tick": 1399,
+  "when": "23 Summer, Year 1 · 08:48",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:9"
+  ],
+  "text": "Tamsin Ashdown brought word from Saltmere: Nimue Starwhisper left Saltmere for Highmoor with 25 fish."
+ },
+ {
+  "id": "event:52",
+  "tick": 1429,
+  "when": "23 Summer, Year 1 · 09:19",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:33"
+  ],
+  "text": "Tamsin Ashdown delivered 40 stone from Saltmere to Highmoor."
+ },
+ {
+  "id": "event:54",
+  "tick": 1482,
+  "when": "23 Summer, Year 1 · 10:11",
+  "where": "highmoor",
+  "kind": "project_stage",
+  "causes": [
+   "event:45",
+   "event:46"
+  ],
+  "text": "Clear debris finished on the granary at Highmoor."
+ },
+ {
+  "id": "event:55",
+  "tick": 1484,
+  "when": "23 Summer, Year 1 · 10:13",
+  "where": "highmoor",
+  "kind": "project_stage",
+  "causes": [
+   "event:17"
+  ],
+  "text": "Lower walls finished on the watchtower at Highmoor, using 20 stone and 6 timber."
+ },
+ {
+  "id": "event:58",
+  "tick": 1620,
+  "when": "23 Summer, Year 1 · 13:05",
+  "where": "saltmere",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Saltmere agreed to sell 30 timber to Highmoor for 120 pennies."
+ },
+ {
+  "id": "event:67",
+  "tick": 1860,
+  "when": "23 Summer, Year 1 · 15:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:70",
+  "tick": 1952,
+  "when": "23 Summer, Year 1 · 18:02",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:47"
+  ],
+  "text": "Aldric Oakes delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:72",
+  "tick": 1988,
+  "when": "23 Summer, Year 1 · 18:37",
+  "where": "highmoor",
+  "kind": "project_stage",
+  "causes": [
+   "event:45",
+   "event:54"
+  ],
+  "text": "Rebuild walls and floor finished on the granary at Highmoor, using 10 timber and 8 stone."
+ },
+ {
+  "id": "event:73",
+  "tick": 2042,
+  "when": "23 Summer, Year 1 · 19:32",
+  "where": "highmoor",
+  "kind": "project_stage",
+  "causes": [
+   "event:55"
+  ],
+  "text": "Upper walls finished on the watchtower at Highmoor, using 20 stone and 8 timber."
+ },
+ {
+  "id": "event:74",
+  "tick": 2136,
+  "when": "23 Summer, Year 1 · 21:42",
+  "where": "saltmere",
+  "kind": "report_received",
+  "causes": [
+   "event:45"
+  ],
+  "text": "Nimue Starwhisper brought word from Highmoor: The fire in the granary at Highmoor destroyed the building after 2 h. 18 people fought it with 55 buckets. Lost: 1479 grain and 112 flour; saved: 48 flour. Condition 0%."
+ },
+ {
+  "id": "event:84",
+  "tick": 2574,
+  "when": "24 Summer, Year 1 · 04:24",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:3"
+  ],
+  "text": "Perrin Miller brought an old tale from Millbrook: Farmers leave bread at the Whispering Stones. It is always gone by morning."
+ },
+ {
+  "id": "event:85",
+  "tick": 2574,
+  "when": "24 Summer, Year 1 · 04:24",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:37"
+  ],
+  "text": "Perrin Miller brought word from Millbrook: Osric Marsh left Millbrook for Brightwater with 248 grain."
+ },
+ {
+  "id": "event:86",
+  "tick": 2604,
+  "when": "24 Summer, Year 1 · 04:54",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:38"
+  ],
+  "text": "Perrin Miller delivered 400 grain from Millbrook to Highmoor."
+ },
+ {
+  "id": "event:88",
+  "tick": 2610,
+  "when": "24 Summer, Year 1 · 05:00",
+  "where": "highmoor",
+  "kind": "ration_policy",
+  "causes": [
+   "event:48"
+  ],
+  "text": "Highmoor ended rationing: 11.8 days of food on hand."
+ },
+ {
+  "id": "event:89",
+  "tick": 2747,
+  "when": "24 Summer, Year 1 · 07:17",
+  "where": "highmoor",
+  "kind": "project_blocked",
+  "causes": [
+   "event:73"
+  ],
+  "text": "Work on the watchtower at Highmoor stopped: it needs 2 timber that the town does not have."
+ },
+ {
+  "id": "event:91",
+  "tick": 2847,
+  "when": "24 Summer, Year 1 · 08:57",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:59"
+  ],
+  "text": "Yara Greaves brought word from Brightwater: Osric Marsh delivered 248 grain from Millbrook to Brightwater."
+ },
+ {
+  "id": "event:92",
+  "tick": 2847,
+  "when": "24 Summer, Year 1 · 08:57",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:47"
+  ],
+  "text": "Yara Greaves brought word from Brightwater: Aldric Oakes left Brightwater for Highmoor with 40 flour."
+ },
+ {
+  "id": "event:93",
+  "tick": 2871,
+  "when": "24 Summer, Year 1 · 08:48",
+  "where": "brightwater",
+  "kind": "report_received",
+  "causes": [
+   "event:45"
+  ],
+  "text": "Aldric Oakes brought word from Highmoor: The fire in the granary at Highmoor destroyed the building after 2 h. 18 people fought it with 55 buckets. Lost: 1479 grain and 112 flour; saved: 48 flour. Condition 0%."
+ },
+ {
+  "id": "event:98",
+  "tick": 2877,
+  "when": "24 Summer, Year 1 · 09:27",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:69"
+  ],
+  "text": "Yara Greaves delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:105",
+  "tick": 3151,
+  "when": "24 Summer, Year 1 · 14:01",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:33"
+  ],
+  "text": "Nimue Starwhisper brought word from Saltmere: Tamsin Ashdown left Saltmere for Highmoor with 40 stone."
+ },
+ {
+  "id": "event:107",
+  "tick": 3181,
+  "when": "24 Summer, Year 1 · 14:31",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:79"
+  ],
+  "text": "Nimue Starwhisper delivered 30 timber from Saltmere to Highmoor."
+ },
+ {
+  "id": "event:108",
+  "tick": 3181,
+  "when": "24 Summer, Year 1 · 14:31",
+  "where": "highmoor",
+  "kind": "project_resumed",
+  "causes": [],
+  "text": "Materials arrived and work resumed on the watchtower at Highmoor."
+ },
+ {
+  "id": "event:110",
+  "tick": 3200,
+  "when": "24 Summer, Year 1 · 14:50",
+  "where": "highmoor",
+  "kind": "project_completed",
+  "causes": [
+   "event:45",
+   "event:72"
+  ],
+  "text": "The granary at Highmoor is repaired and back in use."
+ },
+ {
+  "id": "event:111",
+  "tick": 3426,
+  "when": "24 Summer, Year 1 · 18:36",
+  "where": "highmoor",
+  "kind": "project_completed",
+  "causes": [
+   "event:73"
+  ],
+  "text": "The watchtower at Highmoor is complete and in use."
+ },
+ {
+  "id": "event:112",
+  "tick": 3510,
+  "when": "24 Summer, Year 1 · 19:27",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:115",
+  "tick": 3796,
+  "when": "25 Summer, Year 1 · 00:13",
+  "where": "brightwater",
+  "kind": "report_received",
+  "causes": [
+   "event:42"
+  ],
+  "text": "Yara Greaves brought word from Highmoor: The alarm sounded in Highmoor: the granary is burning. It was noticed after 22 min."
+ },
+ {
+  "id": "event:120",
+  "tick": 4050,
+  "when": "25 Summer, Year 1 · 05:35",
+  "where": "saltmere",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Saltmere agreed to sell 60 fish to Highmoor for 120 pennies."
+ },
+ {
+  "id": "event:122",
+  "tick": 4081,
+  "when": "25 Summer, Year 1 · 06:06",
+  "where": "saltmere",
+  "kind": "report_received",
+  "causes": [
+   "event:42"
+  ],
+  "text": "Nimue Starwhisper brought word from Highmoor: The alarm sounded in Highmoor: the granary is burning. It was noticed after 22 min."
+ },
+ {
+  "id": "event:129",
+  "tick": 4455,
+  "when": "25 Summer, Year 1 · 10:45",
+  "where": "millbrook",
+  "kind": "report_received",
+  "causes": [
+   "event:45"
+  ],
+  "text": "Perrin Miller brought word from Highmoor: The fire in the granary at Highmoor destroyed the building after 2 h. 18 people fought it with 55 buckets. Lost: 1479 grain and 112 flour; saved: 48 flour. Condition 0%."
+ },
+ {
+  "id": "event:134",
+  "tick": 4525,
+  "when": "25 Summer, Year 1 · 12:55",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:69"
+  ],
+  "text": "Aldric Oakes brought word from Brightwater: Yara Greaves left Brightwater for Highmoor with 40 flour."
+ },
+ {
+  "id": "event:136",
+  "tick": 4555,
+  "when": "25 Summer, Year 1 · 13:25",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:113"
+  ],
+  "text": "Aldric Oakes delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:138",
+  "tick": 4605,
+  "when": "25 Summer, Year 1 · 14:15",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:38"
+  ],
+  "text": "Osric Marsh brought word from Millbrook: Perrin Miller left Millbrook for Highmoor with 400 grain."
+ },
+ {
+  "id": "event:139",
+  "tick": 4635,
+  "when": "25 Summer, Year 1 · 14:45",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:90"
+  ],
+  "text": "Osric Marsh delivered 400 grain from Millbrook to Highmoor."
+ },
+ {
+  "id": "event:141",
+  "tick": 4680,
+  "when": "25 Summer, Year 1 · 14:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:143",
+  "tick": 5081,
+  "when": "25 Summer, Year 1 · 22:11",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:126"
+  ],
+  "text": "Tamsin Ashdown brought word from Saltmere: Rhask Scaleborn delivered 40 provisions from Scalegate to Saltmere."
+ },
+ {
+  "id": "event:144",
+  "tick": 5081,
+  "when": "25 Summer, Year 1 · 22:11",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:79"
+  ],
+  "text": "Tamsin Ashdown brought word from Saltmere: Nimue Starwhisper left Saltmere for Highmoor with 30 timber."
+ },
+ {
+  "id": "event:145",
+  "tick": 5111,
+  "when": "25 Summer, Year 1 · 22:41",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:128"
+  ],
+  "text": "Tamsin Ashdown delivered 60 fish from Saltmere to Highmoor."
+ },
+ {
+  "id": "event:152",
+  "tick": 5490,
+  "when": "26 Summer, Year 1 · 05:36",
+  "where": "saltmere",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Saltmere agreed to sell 40 fish to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:155",
+  "tick": 5667,
+  "when": "26 Summer, Year 1 · 07:57",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:113"
+  ],
+  "text": "Yara Greaves brought word from Brightwater: Aldric Oakes left Brightwater for Highmoor with 40 flour."
+ },
+ {
+  "id": "event:156",
+  "tick": 5697,
+  "when": "26 Summer, Year 1 · 08:27",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:142"
+  ],
+  "text": "Yara Greaves delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:170",
+  "tick": 6240,
+  "when": "26 Summer, Year 1 · 16:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:174",
+  "tick": 6486,
+  "when": "26 Summer, Year 1 · 20:36",
+  "where": "millbrook",
+  "kind": "report_received",
+  "causes": [
+   "event:42"
+  ],
+  "text": "Osric Marsh brought word from Highmoor: The alarm sounded in Highmoor: the granary is burning. It was noticed after 22 min."
+ },
+ {
+  "id": "event:177",
+  "tick": 6550,
+  "when": "26 Summer, Year 1 · 22:39",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:128"
+  ],
+  "text": "Nimue Starwhisper brought word from Saltmere: Tamsin Ashdown left Saltmere for Highmoor with 60 fish."
+ },
+ {
+  "id": "event:178",
+  "tick": 6580,
+  "when": "26 Summer, Year 1 · 23:10",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:154"
+  ],
+  "text": "Nimue Starwhisper delivered 40 fish from Saltmere to Highmoor."
+ },
+ {
+  "id": "event:185",
+  "tick": 7255,
+  "when": "27 Summer, Year 1 · 10:25",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:142"
+  ],
+  "text": "Aldric Oakes brought word from Brightwater: Yara Greaves left Brightwater for Highmoor with 40 flour."
+ },
+ {
+  "id": "event:187",
+  "tick": 7285,
+  "when": "27 Summer, Year 1 · 10:55",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:171"
+  ],
+  "text": "Aldric Oakes delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:198",
+  "tick": 7800,
+  "when": "27 Summer, Year 1 · 18:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ },
+ {
+  "id": "event:200",
+  "tick": 8105,
+  "when": "28 Summer, Year 1 · 07:18",
+  "where": "scalegate",
+  "kind": "report_received",
+  "causes": [
+   "event:45"
+  ],
+  "text": "Rhask Scaleborn brought word from Saltmere: The fire in the granary at Highmoor destroyed the building after 2 h. 18 people fought it with 55 buckets. Lost: 1479 grain and 112 flour; saved: 48 flour. Condition 0%."
+ },
+ {
+  "id": "event:210",
+  "tick": 8777,
+  "when": "28 Summer, Year 1 · 11:47",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:3"
+  ],
+  "text": "Yara Greaves brought an old tale from Brightwater: Farmers leave bread at the Whispering Stones. It is always gone by morning."
+ },
+ {
+  "id": "event:211",
+  "tick": 8777,
+  "when": "28 Summer, Year 1 · 11:47",
+  "where": "highmoor",
+  "kind": "report_received",
+  "causes": [
+   "event:171"
+  ],
+  "text": "Yara Greaves brought word from Brightwater: Aldric Oakes left Brightwater for Highmoor with 40 flour."
+ },
+ {
+  "id": "event:212",
+  "tick": 8807,
+  "when": "28 Summer, Year 1 · 12:16",
+  "where": "highmoor",
+  "kind": "shipment_delivered",
+  "causes": [
+   "event:199"
+  ],
+  "text": "Yara Greaves delivered 40 flour from Brightwater to Highmoor."
+ },
+ {
+  "id": "event:216",
+  "tick": 9000,
+  "when": "28 Summer, Year 1 · 14:57",
+  "where": "brightwater",
+  "kind": "contract_agreed",
+  "causes": [],
+  "text": "Brightwater agreed to sell 40 flour to Highmoor for 80 pennies."
+ }
+]

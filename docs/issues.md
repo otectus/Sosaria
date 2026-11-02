@@ -27,6 +27,7 @@ Keyed to the findings and milestones of the handoff in [`sosaria_update.md`](../
 
 ## Known limitations and open items
 
+- **Balance**: in ten seeds × ten years ([evidence](evidence/endurance-10x10.md)), hunger is uncommon and always recovers, but it happens. Highmoor ran out of grain in three seeds: in a seed's first spring, before Millbrook's harvest reached it, and late in one seed, when Highmoor's treasury was too low to buy Millbrook's surplus until dues refilled it. Millbrook meanwhile builds stores of up to about 16,000 grain. Tuning stewardship, storage and the flow of coin is M3 work; its gate is a multi-year run that shows variation and recovery without unexplained collapse or runaway resources.
 - **Browsers and GPUs**: only headless Chrome (SwiftShader) has been exercised. Firefox, Safari and a real-GPU performance pass are needed before M2.
 - **Visual acceptance matrix** (handoff 15.2): not done; it is M2's gate and needs human approval of screenshots.
 - **Usability testing** with someone unfamiliar with the project (handoff 15.4): not done.
